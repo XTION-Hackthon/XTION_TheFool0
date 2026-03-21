@@ -7,6 +7,7 @@
 import { Router, type Request, type Response } from 'express';
 import { db } from '../db';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
+import { requireRole } from '../middleware/auth';
 import type { ErrorResponse, Position } from '../types';
 
 export const moveRouter = Router();
@@ -58,7 +59,7 @@ function getContestantFromRequest(req: Request): ContestantRow | null {
 // Returns: { newPosition, newZoneId, timestamp }
 // ---------------------------------------------------------------------------
 
-moveRouter.post('/', async (req: Request, res: Response): Promise<void> => {
+moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, res: Response): Promise<void> => {
   // Auth / sender resolution
   const contestant = getContestantFromRequest(req);
   if (!contestant) {

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import Phaser from 'phaser';
 import { createGame } from './game';
 import { initStores } from './stores';
+import { useRoleStore } from './stores/roleStore';
 import { wsClient } from './services/ws-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
@@ -48,6 +49,8 @@ function App() {
   const [key, setKey] = useState<string>(getStoredKey);
   const [inputKey, setInputKey] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const role = useRoleStore((s) => s.role);
+  const fetchRole = useRoleStore((s) => s.fetchRole);
 
   // Connect WebSocket when key is available
   useEffect(() => {
@@ -57,7 +60,11 @@ function App() {
     const wsUrl = getWsUrl();
     wsClient.connect(wsUrl, key);
 
-    const unsub = wsClient.onConnect(() => setConnecting(false));
+    const unsub = wsClient.onConnect(() => {
+      setConnecting(false);
+      // Fetch role after successful connection
+      fetchRole();
+    });
     const unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
 
     return () => {
@@ -65,7 +72,7 @@ function App() {
       unsubDisc();
       wsClient.disconnect();
     };
-  }, [key]);
+  }, [key, fetchRole]);
 
   // Mount Phaser game once
   useEffect(() => {
@@ -185,14 +192,14 @@ function App() {
       <UIOverlay />
       {/* Attribute panel — shown when a Sprite is clicked */}
       <AttributePanel />
-      {/* Vote buttons — shown when a Sprite is selected */}
-      <VoteButtons />
-      {/* Heartbeat overview panel + flash alerts */}
-      <HeartbeatOverview />
-      {/* Admin panel */}
-      <AdminPanel />
-      {/* Barrage input */}
-      <BarrageInput />
+      {/* Vote buttons — shown when a Sprite is selected (Human_Viewer only) */}
+      {role === 'Human_Viewer' && <VoteButtons />}
+      {/* Heartbeat overview panel + flash alerts (Admin only) */}
+      {role === 'Admin' && <HeartbeatOverview />}
+      {/* Admin panel (Admin only) */}
+      {role === 'Admin' && <AdminPanel />}
+      {/* Barrage input (Human_Viewer only) */}
+      {role === 'Human_Viewer' && <BarrageInput />}
     </div>
   );
 }

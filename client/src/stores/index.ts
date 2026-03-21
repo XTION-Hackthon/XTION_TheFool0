@@ -14,6 +14,8 @@ import type { Contestant, Zone, TalkMessage, BroadcastMessage, BarrageMessage, G
 export { useGameStore } from './gameStore';
 export { useMessageStore } from './messageStore';
 export { useUiStore } from './uiStore';
+export { useRoleStore } from './roleStore';
+export type { Role } from './roleStore';
 
 let initialized = false;
 

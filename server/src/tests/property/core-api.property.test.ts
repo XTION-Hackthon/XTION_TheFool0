@@ -48,6 +48,7 @@ vi.mock('../../modules/world-manager', () => ({
     getPosition: mockGetPosition,
     getApplicableRules: mockGetApplicableRules,
     getEnergy: mockGetEnergy,
+    isAPIAllowed: vi.fn().mockReturnValue(true),
     setPosition: vi.fn().mockResolvedValue(undefined),
     getZoneById: vi.fn(),
     getZoneCenter: vi.fn(),
@@ -1060,6 +1061,8 @@ describe('Property 14: Zone 切换规则自动应用', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset mockGetZoneAt to clear any leftover once-implementations from previous tests
+    mockGetZoneAt.mockReset();
   });
 
   it('移动到新 Zone 后，getZoneAt 应返回新 Zone', () => {

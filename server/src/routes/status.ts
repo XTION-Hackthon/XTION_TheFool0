@@ -6,6 +6,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { db } from '../db';
 import { worldManager } from '../modules/world-manager';
+import { requireRole } from '../middleware/auth';
 
 export const statusRouter = Router();
 
@@ -71,7 +72,7 @@ function rowToZone(r: ZoneRow) {
 // Requirements: 8.6, 13.1
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/status/me', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/status/me', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const contestantId = req.contestantId ?? (req.headers['x-contestant-id'] as string);
     if (!contestantId) return next(httpError(401, 'AUTH_MISSING_KEY', '需要认证'));
@@ -104,7 +105,7 @@ statusRouter.get('/status/me', (req: Request, res: Response, next: NextFunction)
 // Requirements: 13.2
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/status/:id', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/status/:id', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const row = db.prepare('SELECT * FROM contestants WHERE id = ?').get(req.params['id'] as string) as ContestantRow | undefined;
     if (!row) return next(httpError(404, 'CONTESTANT_NOT_FOUND', '选手不存在'));
@@ -126,7 +127,7 @@ statusRouter.get('/status/:id', (req: Request, res: Response, next: NextFunction
 // Requirements: 8.7
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/contestants', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/contestants', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const zoneId = req.query['zone_id'] as string | undefined;
 
@@ -158,7 +159,7 @@ statusRouter.get('/contestants', (req: Request, res: Response, next: NextFunctio
 // Requirements: 8.8
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/zones', (_req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/zones', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const rows = db.prepare('SELECT * FROM zones').all() as ZoneRow[];
     res.json(rows.map(rowToZone));
@@ -201,7 +202,7 @@ statusRouter.get('/zones/:id', (req: Request, res: Response, next: NextFunction)
 // Requirements: 8.9, 13.4
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/world', (_req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), (_req: Request, res: Response, next: NextFunction) => {
   try {
     const mapDims = db.prepare('SELECT MAX(x2) as width, MAX(y2) as height FROM zones').get() as
       | { width: number | null; height: number | null };

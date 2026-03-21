@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMessageStore } from '../stores/messageStore';
 import { useGameStore } from '../stores/gameStore';
+import { useRoleStore } from '../stores/roleStore';
 import type { TalkMessage, BroadcastMessage, BarrageMessage } from '../../../server/src/types/index';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -281,15 +282,26 @@ function injectStyles() {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function UIOverlay() {
+  const role = useRoleStore((s) => s.role);
+
   useEffect(() => {
     injectStyles();
   }, []);
 
+  // Agent_Viewer: read-only view — show broadcast and barrage display but no talk bubbles
+  // Human_Viewer: show barrage layer (incoming barrages scroll) + broadcast
+  // Admin / Agent_Player: full display (talk bubbles, broadcast, barrage layer)
+  // null (loading/unauthenticated): show nothing role-specific
+
+  const showTalkBubbles = role === 'Admin' || role === 'Agent_Player';
+  const showBroadcast = role !== null; // all authenticated roles see broadcasts
+  const showBarrageLayer = role !== null; // all authenticated roles see incoming barrages
+
   return (
     <div style={overlayStyle}>
-      <BroadcastBanner />
-      <TalkBubbles />
-      <BarrageLayer />
+      {showBroadcast && <BroadcastBanner />}
+      {showTalkBubbles && <TalkBubbles />}
+      {showBarrageLayer && <BarrageLayer />}
     </div>
   );
 }

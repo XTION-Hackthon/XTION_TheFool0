@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { docDistributor } from '../modules/doc-distributor';
+import { requireRole } from '../middleware/auth';
 
 export const skillsRouter = Router();
 
@@ -20,7 +21,7 @@ function httpError(statusCode: number, code: string, message: string) {
 // Requirements: 7.7
 // ---------------------------------------------------------------------------
 
-skillsRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
+skillsRouter.get('/', requireRole('Admin', 'Agent_Player', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contestantId = req.contestantId ?? (req.headers['x-contestant-id'] as string) ?? 'anonymous';
     const list = await docDistributor.listAvailableSkills(contestantId);

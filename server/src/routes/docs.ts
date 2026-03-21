@@ -6,6 +6,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { db } from '../db';
 import { docDistributor } from '../modules/doc-distributor';
+import { requireRole } from '../middleware/auth';
 
 export const docsRouter = Router();
 
@@ -21,7 +22,7 @@ function httpError(statusCode: number, code: string, message: string) {
 // Requirements: 12.4, 12.6
 // ---------------------------------------------------------------------------
 
-docsRouter.get('/:doc_name', async (req: Request, res: Response, next: NextFunction) => {
+docsRouter.get('/:doc_name', requireRole('Admin', 'Agent_Player', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const doc = await docDistributor.getPlatformDocument(req.params['doc_name'] as string);
     res.json(doc);

@@ -36,7 +36,7 @@ describe('Property 1: Key 唯一性与长度', () => {
       fc.asyncProperty(
         fc.string({ minLength: 1, maxLength: 50 }),
         async (name) => {
-          const result = await authManager.generateKey(name);
+          const result = await authManager.generateKey(name, 'Agent_Player');
           return result.key.length >= 32;
         },
       ),
@@ -52,7 +52,7 @@ describe('Property 1: Key 唯一性与长度', () => {
         async (count) => {
           const keys: string[] = [];
           for (let i = 0; i < count; i++) {
-            const result = await authManager.generateKey(`contestant-${i}`);
+            const result = await authManager.generateKey(`contestant-${i}`, 'Agent_Player');
             keys.push(result.key);
           }
           const uniqueKeys = new Set(keys);
@@ -66,7 +66,7 @@ describe('Property 1: Key 唯一性与长度', () => {
   it('生成 1000 个 Key 时，所有 Key 长度 ≥ 32 且无重复', async () => {
     const keys: string[] = [];
     for (let i = 0; i < 1000; i++) {
-      const result = await authManager.generateKey(`contestant-${i}`);
+      const result = await authManager.generateKey(`contestant-${i}`, 'Agent_Player');
       keys.push(result.key);
     }
 
@@ -104,8 +104,8 @@ describe('Property 2: 认证正确性', () => {
         // 随机生成 keyId（模拟数据库中存在的 active key）
         fc.uuid(),
         async (keyId) => {
-          // mock db 返回 active 状态的 key
-          mockGet.mockReturnValue({ id: keyId, status: 'active' });
+          // mock db 返回 active 状态的 key（匹配 validateKey 的 JOIN 查询列名）
+          mockGet.mockReturnValue({ key_id: keyId, status: 'active', role: 'Agent_Player', contestant_id: null });
 
           const result = await authManager.validateKey('some-valid-key');
           return result.valid === true && result.contestantId === keyId;
@@ -175,11 +175,11 @@ describe('Property 2: 认证正确性', () => {
         ),
         async ({ scenario, keyId }) => {
           if (scenario === 'active') {
-            mockGet.mockReturnValue({ id: keyId, status: 'active' });
+            mockGet.mockReturnValue({ key_id: keyId, status: 'active', role: 'Agent_Player', contestant_id: null });
             const result = await authManager.validateKey('test-key');
             return result.valid === true && result.contestantId === keyId;
           } else if (scenario === 'revoked') {
-            mockGet.mockReturnValue({ id: keyId, status: 'revoked' });
+            mockGet.mockReturnValue({ key_id: keyId, status: 'revoked', role: 'Agent_Player', contestant_id: null });
             const result = await authManager.validateKey('test-key');
             return result.valid === false && result.contestantId === undefined;
           } else {

@@ -20,8 +20,12 @@ function makeDb() {
   db.exec(`
     CREATE TABLE keys (
       id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE,
-      contestant_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+      contestant_name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Agent_Player',
+      status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL, revoked_at INTEGER
+    );
+    CREATE TABLE contestants (
+      id TEXT PRIMARY KEY, key_id TEXT, name TEXT
     );
   `);
   return db;
@@ -101,7 +105,7 @@ describe('Property 20: API 认证拦截', () => {
         async (name) => {
           const db = makeDb();
           const { app, authMgr } = makeApp(db);
-          const keyObj = await authMgr.generateKey(name);
+          const keyObj = await authMgr.generateKey(name, 'Agent_Player');
 
           const res = await request(app)
             .get('/api/protected')
@@ -150,7 +154,7 @@ describe('Property 20: API 认证拦截', () => {
         async (name) => {
           const db = makeDb();
           const { app, authMgr } = makeApp(db);
-          const keyObj = await authMgr.generateKey(name);
+          const keyObj = await authMgr.generateKey(name, 'Agent_Player');
           await authMgr.revokeKey(keyObj.id);
 
           const res = await request(app)

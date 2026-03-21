@@ -24,6 +24,7 @@ function createTables(): void {
       id TEXT PRIMARY KEY,
       key TEXT NOT NULL UNIQUE,
       contestant_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Agent_Player',
       status TEXT NOT NULL DEFAULT 'active',
       created_at INTEGER NOT NULL,
       revoked_at INTEGER
@@ -401,9 +402,17 @@ function seedDefaultZone(): void {
 // Public API
 // =============================================================================
 
+function migrateAddRoleColumn(): void {
+  const cols = db.pragma('table_info(keys)') as Array<{ name: string }>;
+  if (!cols.find((c) => c.name === 'role')) {
+    db.exec(`ALTER TABLE keys ADD COLUMN role TEXT NOT NULL DEFAULT 'Agent_Player'`);
+  }
+}
+
 export function initializeDatabase(): void {
   createTables();
   seedBuiltinZoneTypes();
   seedPlatformDocuments();
   seedDefaultZone();
+  migrateAddRoleColumn();
 }

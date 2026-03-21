@@ -11,7 +11,7 @@ import { db } from './db';
 import { authManager } from './modules/auth-manager';
 import { docDistributor } from './modules/doc-distributor';
 import { heartbeatMonitor } from './modules/heartbeat-monitor';
-import type { ClientMessage, ServerEvent, Contestant, Position, Zone } from './types/index';
+import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } from './types/index';
 
 // ---------------------------------------------------------------------------
 // Connection registry — contestantId → WebSocket
@@ -21,6 +21,16 @@ export const connections = new Map<string, WebSocket>();
 
 // Disconnect timers — contestantId → NodeJS.Timeout
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+// ---------------------------------------------------------------------------
+// Client connection context
+// ---------------------------------------------------------------------------
+
+export interface ClientContext {
+  ws: WebSocket;
+  contestantId: string | null;
+  role: Role | null;
+}
 
 // ---------------------------------------------------------------------------
 // DB helpers
@@ -197,10 +207,11 @@ function getMapDimensions(): { width: number; height: number } {
 // ---------------------------------------------------------------------------
 
 async function handleAuth(
-  ws: WebSocket,
+  client: ClientContext,
   payload: { key: string; name?: string },
   registerContestant: (id: string) => void,
 ): Promise<void> {
+  const ws = client.ws;
   const { key, name } = payload;
 
   // Validate key
@@ -212,6 +223,17 @@ async function handleAuth(
   }
 
   const keyId = result.keyId;
+  const role: Role = result.role ?? 'Agent_Player';
+
+  // Store role in connection context
+  client.role = role;
+
+  // Human_Viewer is not allowed to connect via WebSocket
+  if (role === 'Human_Viewer') {
+    sendError(ws, 'AUTH_ROLE_NOT_ALLOWED', '人类观众角色不允许建立 WebSocket 连接');
+    ws.close(1008, 'AUTH_ROLE_NOT_ALLOWED');
+    return;
+  }
 
   // Get default zone and compute initial position
   const defaultZone = getDefaultZone();
@@ -226,6 +248,35 @@ async function handleAuth(
   // Determine contestant name: use provided name or fall back to key's contestantName
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
   const contestantName = name ?? keyRow?.contestant_name ?? 'Unknown';
+
+  // Agent_Viewer: allow connection and push world.state, but mark as read-only (no contestant registration)
+  if (role === 'Agent_Viewer') {
+    const zones = getAllZones();
+    const mapDims = getMapDimensions();
+    const onlineContestants = getAllOnlineContestants();
+
+    const worldStatePayload = {
+      map: {
+        width: mapDims.width,
+        height: mapDims.height,
+        zones,
+      },
+      contestants: onlineContestants.map((c) => ({
+        id: c.id,
+        name: c.name,
+        position: c.position,
+        zone: c.currentZoneId,
+        status: c.status,
+      })),
+    };
+
+    sendEvent(ws, {
+      type: 'world.state',
+      payload: worldStatePayload,
+      timestamp: Date.now(),
+    });
+    return;
+  }
 
   // Register/update contestant in DB
   const contestant = upsertContestant(keyId, contestantName, initialPosition, defaultZone.id);
@@ -307,7 +358,7 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
-    let contestantId: string | null = null;
+    const client: ClientContext = { ws, contestantId: null, role: null };
 
     ws.on('message', (raw) => {
       let msg: ClientMessage;
@@ -318,18 +369,18 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
         return;
       }
 
-      handleMessage(ws, msg, (id) => {
-        contestantId = id;
+      handleMessage(client, msg, (id) => {
+        client.contestantId = id;
         connections.set(id, ws);
       });
     });
 
     ws.on('close', () => {
-      if (contestantId) {
-        connections.delete(contestantId);
-        heartbeatMonitor.unregister(contestantId);
+      if (client.contestantId) {
+        connections.delete(client.contestantId);
+        heartbeatMonitor.unregister(client.contestantId);
 
-        const idToMark = contestantId;
+        const idToMark = client.contestantId;
 
         // Schedule offline marking after 5 seconds, preserving position
         const timer = setTimeout(() => {
@@ -366,11 +417,22 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 // Message routing
 // ---------------------------------------------------------------------------
 
-function handleMessage(
-  ws: WebSocket,
+// Game command types that Agent_Viewer is not allowed to send
+const GAME_COMMAND_TYPES = new Set(['move', 'talk', 'broadcast', 'heartbeat']);
+
+export function handleMessage(
+  client: ClientContext,
   msg: ClientMessage,
   registerContestant: (id: string) => void,
 ): void {
+  const ws = client.ws;
+
+  // Agent_Viewer: intercept game command messages and return error
+  if (client.role === 'Agent_Viewer' && GAME_COMMAND_TYPES.has(msg.type)) {
+    sendError(ws, 'FORBIDDEN_ROLE', '观察者角色不能发送游戏指令');
+    return;
+  }
+
   switch (msg.type) {
     case 'ping':
       sendEvent(ws, { type: 'pong', payload: {}, timestamp: Date.now() });
@@ -382,7 +444,7 @@ function handleMessage(
         sendError(ws, 'AUTH_MISSING_KEY', '认证消息缺少 key 字段');
         return;
       }
-      handleAuth(ws, payload, registerContestant).catch((err: unknown) => {
+      handleAuth(client, payload, registerContestant).catch((err: unknown) => {
         console.error('[WS] auth error:', err);
         sendError(ws, 'SYS_INTERNAL', '认证过程发生内部错误');
         ws.close(1011, 'SYS_INTERNAL');

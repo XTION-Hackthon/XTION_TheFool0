@@ -6,10 +6,13 @@
 // Auth & Contestant
 // -----------------------------------------------------------------------------
 
+export type Role = 'Admin' | 'Agent_Player' | 'Human_Viewer' | 'Agent_Viewer';
+
 export interface Key {
   id: string;
   key: string;
   contestantName: string;
+  role: Role;
   status: 'active' | 'revoked';
   createdAt: number;
   revokedAt?: number;
@@ -282,8 +285,9 @@ export interface ServerResponse {
 // --- AuthManager ---
 
 export interface IAuthManager {
-  generateKey(contestantName: string): Promise<Key>;
-  validateKey(key: string): Promise<{ valid: boolean; contestantId?: string; keyId?: string }>;
+  generateKey(contestantName: string, role: Role): Promise<Key>;
+  validateKey(key: string): Promise<{ valid: boolean; contestantId?: string; keyId?: string; role?: Role }>;
+  updateKeyRole(keyId: string, role: Role): Promise<Key>;
   revokeKey(keyId: string): Promise<void>;
   regenerateKey(keyId: string): Promise<Key>;
   listKeys(): Promise<Key[]>;

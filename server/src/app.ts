@@ -21,7 +21,8 @@ import { eventsRouter } from './routes/events';
 import { interactionRouter } from './routes/interaction';
 import { statusRouter } from './routes/status';
 import { adminMonitorRouter } from './routes/admin-monitor';
-import { authMiddleware } from './middleware/auth';
+import { authRouter } from './routes/auth';
+import { authMiddleware, requireRole } from './middleware/auth';
 
 export const app = express();
 
@@ -75,22 +76,23 @@ app.get('/health', (_req: Request, res: Response) => {
 // Routes
 // ---------------------------------------------------------------------------
 
-app.use('/api/admin/keys', adminKeysRouter);
-app.use('/api/admin', adminZonesRouter);
-app.use('/api/admin', adminMoveRouter);
+app.use('/api/admin/keys', authMiddleware, requireRole('Admin'), adminKeysRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminZonesRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMoveRouter);
 app.use('/api/talk', authMiddleware, talkRouter);
 app.use('/api/broadcast', authMiddleware, broadcastRouter);
 app.use('/api/move', authMiddleware, moveRouter);
 app.use('/api/heartbeat', authMiddleware, heartbeatRouter);
-app.use('/api/admin', adminHeartbeatRouter);
-app.use('/api/admin/skills', adminSkillsRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminHeartbeatRouter);
+app.use('/api/admin/skills', authMiddleware, requireRole('Admin'), adminSkillsRouter);
 app.use('/api/skills', authMiddleware, skillsRouter);
 app.use('/api/docs', authMiddleware, docsRouter);
-app.use('/api/admin/docs', adminDocsRouter);
+app.use('/api/admin/docs', authMiddleware, requireRole('Admin'), adminDocsRouter);
 app.use('/api', authMiddleware, eventsRouter);
 app.use('/api', interactionRouter);
 app.use('/api', authMiddleware, statusRouter);
-app.use('/api/admin', adminMonitorRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);
+app.use('/api/auth', authRouter);
 
 // ---------------------------------------------------------------------------
 // Unified error handler — { "error": { "code": "...", "message": "..." } }

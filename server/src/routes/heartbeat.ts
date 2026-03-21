@@ -7,6 +7,7 @@
 import { Router, type Request, type Response } from 'express';
 import { db } from '../db';
 import { heartbeatMonitor } from '../modules/heartbeat-monitor';
+import { requireRole } from '../middleware/auth';
 import type { ErrorResponse, HeartbeatPayload } from '../types';
 
 export const heartbeatRouter = Router();
@@ -55,7 +56,7 @@ function getContestantFromRequest(req: Request): ContestantRow | null {
 // POST /api/heartbeat
 // ---------------------------------------------------------------------------
 
-heartbeatRouter.post('/', (req: Request, res: Response): void => {
+heartbeatRouter.post('/', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response): void => {
   const contestant = getContestantFromRequest(req);
   if (!contestant) {
     const body: ErrorResponse = {
