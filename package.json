@@ -8,6 +8,8 @@
     "client"
   ],
   "scripts": {
+    "bootstrap:admin": "node bootstrap-admin-key.js",
+    "generate:keys": "node generate-keys.js",
     "dev:server": "npm run dev --workspace=server",
     "dev:client": "npm run dev --workspace=client",
     "build:server": "npm run build --workspace=server",

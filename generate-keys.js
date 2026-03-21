@@ -2,26 +2,31 @@
 
 /**
  * 生成多个 API Key 的脚本
- * 使用方式: node generate-keys.js <数量> [基础名称]
- * 例如: node generate-keys.js 5 Agent
+ * 使用方式: node generate-keys.js <数量> [基础名称] [角色]
+ * 例如: XTION_ADMIN_KEY=... node generate-keys.js 5 Agent Agent_Player
  */
 
 const http = require('http');
 
 const count = parseInt(process.argv[2]) || 3;
 const baseName = process.argv[3] || 'Agent';
-const apiUrl = 'http://localhost:3000/api/admin/keys';
+const role = process.argv[4] || 'Agent_Player';
+const adminKey = process.env.XTION_ADMIN_KEY || process.env.ADMIN_KEY || '';
+const apiHost = process.env.XTION_API_HOST || 'localhost';
+const apiPort = parseInt(process.env.XTION_API_PORT || '3000', 10);
+const VALID_ROLES = new Set(['Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer']);
 
 async function generateKey(name) {
   return new Promise((resolve, reject) => {
-    const postData = JSON.stringify({ name });
+    const postData = JSON.stringify({ name, role });
 
     const options = {
-      hostname: 'localhost',
-      port: 3000,
+      hostname: apiHost,
+      port: apiPort,
       path: '/api/admin/keys',
       method: 'POST',
       headers: {
+        Authorization: `Bearer ${adminKey}`,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(postData),
       },
@@ -48,7 +53,14 @@ async function generateKey(name) {
 }
 
 async function main() {
-  console.log(`\n🔑 生成 ${count} 个 API Key...\n`);
+  if (!adminKey) {
+    throw new Error('缺少 XTION_ADMIN_KEY 或 ADMIN_KEY，无法调用 /api/admin/keys');
+  }
+  if (!VALID_ROLES.has(role)) {
+    throw new Error(`无效角色: ${role}。可选值: ${Array.from(VALID_ROLES).join(', ')}`);
+  }
+
+  console.log(`\n🔑 生成 ${count} 个 API Key（role=${role}）...\n`);
 
   const keys = [];
   for (let i = 1; i <= count; i++) {
@@ -73,4 +85,7 @@ async function main() {
   console.log('\n✅ 完成！\n');
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

@@ -257,10 +257,11 @@ async function handleAuth(
   registerContestant: (id: string) => void,
 ): Promise<void> {
   const ws = client.ws;
-  const { key, name } = payload;
+  const normalizedKey = payload.key.trim();
+  const { name } = payload;
 
   // Validate key
-  const result = await authManager.validateKey(key);
+  const result = await authManager.validateKey(normalizedKey);
   if (!result.valid || !result.keyId) {
     sendError(ws, 'AUTH_INVALID_KEY', 'Key 无效或已被吊销');
     ws.close(1008, 'AUTH_INVALID_KEY');
@@ -456,7 +457,7 @@ export function handleMessage(
 
     case 'auth': {
       const payload = msg.payload as { key: string; name?: string };
-      if (!payload?.key) {
+      if (!payload?.key || !payload.key.trim()) {
         sendError(ws, 'AUTH_MISSING_KEY', '认证消息缺少 key 字段');
         return;
       }

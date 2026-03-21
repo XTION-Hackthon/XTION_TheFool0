@@ -41,10 +41,16 @@ function getStoredKey(): string {
   const params = new URLSearchParams(window.location.search);
   const keyFromUrl = params.get('key');
   if (keyFromUrl) {
-    localStorage.setItem('openclaw_key', keyFromUrl);
-    return keyFromUrl;
+    const normalized = keyFromUrl.trim();
+    localStorage.setItem('openclaw_key', normalized);
+    return normalized;
   }
-  return localStorage.getItem('openclaw_key') ?? '';
+  const stored = localStorage.getItem('openclaw_key') ?? '';
+  const normalized = stored.trim();
+  if (stored !== normalized) {
+    localStorage.setItem('openclaw_key', normalized);
+  }
+  return normalized;
 }
 
 type WorldOverviewResponse = {

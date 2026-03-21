@@ -24,7 +24,7 @@ export class ApiError extends Error {
 }
 
 function getApiKey(): string {
-  return localStorage.getItem('openclaw_key') ?? '';
+  return (localStorage.getItem('openclaw_key') ?? '').trim();
 }
 
 function buildHeaders(extra?: Record<string, string>): Record<string, string> {
