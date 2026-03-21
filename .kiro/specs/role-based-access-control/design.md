@@ -65,7 +65,7 @@ graph TD
     G --> H{role check}
     H -->|Agent_Player / Admin| I[完整 WS 会话]
     H -->|Agent_Viewer| J[只读 WS 会话]
-    H -->|Human_Viewer| K[只读 WS 会话]
+    H -->|Human_Viewer| K[拒绝 WS 连接]
 
     L[GET /api/auth/me] --> B
     B --> M[返回 role + keyId]
