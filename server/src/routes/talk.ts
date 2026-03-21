@@ -11,12 +11,6 @@ import type { ErrorResponse } from '../types';
 
 export const talkRouter = Router();
 
-// ---------------------------------------------------------------------------
-// Helper: extract contestant from Authorization header
-// Note: auth middleware (task 14.1) not yet implemented.
-// We look up the contestant by key from "Authorization: Bearer <key>"
-// ---------------------------------------------------------------------------
-
 interface ContestantRow {
   id: string;
   name: string;
@@ -24,26 +18,9 @@ interface ContestantRow {
 }
 
 function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-
-  const key = authHeader.slice(7).trim();
-  if (!key) return null;
-
-  // Look up key → contestant
-  const keyRow = db.prepare(`
-    SELECT id FROM keys WHERE key = ? AND status = 'active'
-  `).get(key) as { id: string } | undefined;
-
-  if (!keyRow) return null;
-
-  const contestant = db.prepare(`
-    SELECT id, name, status FROM contestants WHERE key_id = ?
-  `).get(keyRow.id) as ContestantRow | undefined;
-
-  return contestant ?? null;
+  const contestantId = req.contestantId;
+  if (!contestantId) return null;
+  return db.prepare('SELECT id, name, status FROM contestants WHERE id = ?').get(contestantId) as ContestantRow | null;
 }
 
 // ---------------------------------------------------------------------------

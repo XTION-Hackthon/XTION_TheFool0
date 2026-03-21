@@ -101,7 +101,7 @@ class WSClient {
 
   connect(url: string, key: string): void {
     this.url = url;
-    this.key = key;
+    this.key = key.trim();
     this.shouldReconnect = true;
     this._openConnection();
   }

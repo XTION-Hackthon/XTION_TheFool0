@@ -16,18 +16,22 @@ export const adminMonitorRouter = Router();
 
 adminMonitorRouter.get('/monitor', (_req: Request, res: Response, next: NextFunction) => {
   try {
-    // Online count
     const onlineCount = (db.prepare(
       "SELECT COUNT(*) as cnt FROM contestants WHERE status = 'online'",
     ).get() as { cnt: number }).cnt;
 
     // Zone population distribution
-    const zonePopulation = db.prepare(`
+    const zonePopulationRows = db.prepare(`
       SELECT z.id as zone_id, z.name as zone_name, COUNT(c.id) as count
       FROM zones z
       LEFT JOIN contestants c ON c.current_zone_id = z.id AND c.status = 'online'
       GROUP BY z.id, z.name
     `).all() as Array<{ zone_id: string; zone_name: string; count: number }>;
+    const zonePopulation = zonePopulationRows.map((zone) => ({
+      zoneId: zone.zone_id,
+      zoneName: zone.zone_name,
+      count: zone.count,
+    }));
 
     // Heartbeat anomalies — contestants with timeout or offline status
     const onlineContestants = db.prepare(

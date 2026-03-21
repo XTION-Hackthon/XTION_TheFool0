@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { db } from '../db';
+import { adminMapConfigStore } from '../modules/admin-map-config';
 import { worldManager } from '../modules/world-manager';
 import { requireRole } from '../middleware/auth';
 
@@ -173,7 +174,7 @@ statusRouter.get('/zones', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
 // Requirements: 13.3
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/zones/:id', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/zones/:id', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const zoneId = req.params['id'] as string;
     const row = db.prepare('SELECT * FROM zones WHERE id = ?').get(zoneId) as ZoneRow | undefined;
@@ -206,6 +207,7 @@ statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
   try {
     const mapDims = db.prepare('SELECT MAX(x2) as width, MAX(y2) as height FROM zones').get() as
       | { width: number | null; height: number | null };
+    const mapConfig = adminMapConfigStore.getConfig();
 
     const zones = (db.prepare('SELECT * FROM zones').all() as ZoneRow[]).map(rowToZone);
 
@@ -221,7 +223,11 @@ statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
     });
 
     res.json({
-      map: { width: mapDims.width ?? 1000, height: mapDims.height ?? 800 },
+      map: {
+        width: mapDims.width ?? 1000,
+        height: mapDims.height ?? 800,
+        ...(mapConfig.backgroundImage ? { backgroundImage: mapConfig.backgroundImage } : {}),
+      },
       zones,
       onlineTotal,
       zonePopulation,
@@ -236,36 +242,130 @@ statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
 // Requirements: 8.3
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/messages', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/messages', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const page = req.query['page'] ? parseInt(req.query['page'] as string, 10) : 1;
     const pageSize = req.query['page_size'] ? parseInt(req.query['page_size'] as string, 10) : 20;
-    const offset = (page - 1) * pageSize;
+    const normalizedPage = Number.isFinite(page) && page > 0 ? page : 1;
+    const normalizedPageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 200) : 20;
+    const role = req.role;
+    const requesterId = req.contestantId;
+    if (role !== 'Admin' && !requesterId) {
+      return next(httpError(401, 'AUTH_MISSING_KEY', '需要认证'));
+    }
 
-    const talks = db.prepare(
-      'SELECT id, sender_id, receiver_ids, content, zone_id, timestamp, "talk" as type FROM talk_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ).all(pageSize, offset) as Array<{
-      id: string; sender_id: string; receiver_ids: string; content: string;
-      zone_id: string; timestamp: number; type: string;
-    }>;
+    const offset = (normalizedPage - 1) * normalizedPageSize;
 
-    const broadcasts = db.prepare(
-      'SELECT id, sender_id, content, timestamp, "broadcast" as type FROM broadcast_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ).all(pageSize, offset) as Array<{
-      id: string; sender_id: string; content: string; timestamp: number; type: string;
-    }>;
+    type MessageRow = {
+      id: string;
+      sender_id: string;
+      receiver_ids: string;
+      content: string;
+      zone_id: string | null;
+      timestamp: number;
+      type: 'talk' | 'broadcast';
+    };
+
+    let rows: MessageRow[];
+    let total = 0;
+
+    if (role === 'Admin') {
+      rows = db.prepare(`
+        SELECT id, sender_id, receiver_ids, content, zone_id, timestamp, 'talk' as type
+        FROM talk_messages
+        UNION ALL
+        SELECT id, sender_id, '[]' as receiver_ids, content, NULL as zone_id, timestamp, 'broadcast' as type
+        FROM broadcast_messages
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+      `).all(normalizedPageSize, offset) as MessageRow[];
+
+      total = (db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM talk_messages) +
+          (SELECT COUNT(*) FROM broadcast_messages) as total
+      `).get() as { total: number }).total;
+    } else {
+      rows = db.prepare(`
+        SELECT id, sender_id, receiver_ids, content, zone_id, timestamp, 'talk' as type
+        FROM talk_messages
+        WHERE sender_id = ? OR INSTR(receiver_ids, '"' || ? || '"') > 0
+        UNION ALL
+        SELECT id, sender_id, '[]' as receiver_ids, content, NULL as zone_id, timestamp, 'broadcast' as type
+        FROM broadcast_messages
+        ORDER BY timestamp DESC
+        LIMIT ? OFFSET ?
+      `).all(requesterId, requesterId, normalizedPageSize, offset) as MessageRow[];
+
+      total = (db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM talk_messages WHERE sender_id = ? OR INSTR(receiver_ids, '"' || ? || '"') > 0) +
+          (SELECT COUNT(*) FROM broadcast_messages) as total
+      `).get(requesterId, requesterId) as { total: number }).total;
+    }
+
+    type TalkItem = {
+      id: string;
+      type: 'talk';
+      senderId: string;
+      receiverIds: string[];
+      content: string;
+      zoneId: string;
+      timestamp: number;
+    };
+
+    type BroadcastItem = {
+      id: string;
+      type: 'broadcast';
+      senderId: string;
+      content: string;
+      timestamp: number;
+    };
+
+    const messages = rows.map((row): TalkItem | BroadcastItem => {
+      if (row.type === 'talk') {
+        return {
+          id: row.id,
+          type: 'talk',
+          senderId: row.sender_id,
+          receiverIds: JSON.parse(row.receiver_ids) as string[],
+          content: row.content,
+          zoneId: row.zone_id ?? '',
+          timestamp: row.timestamp,
+        };
+      }
+
+      return {
+        id: row.id,
+        type: 'broadcast',
+        senderId: row.sender_id,
+        content: row.content,
+        timestamp: row.timestamp,
+      };
+    });
+
+    const talks = messages.filter((m): m is TalkItem => m.type === 'talk');
+    const broadcasts = messages.filter((m): m is BroadcastItem => m.type === 'broadcast');
 
     res.json({
-      talks: talks.map(t => ({
-        id: t.id, senderId: t.sender_id,
-        receiverIds: JSON.parse(t.receiver_ids) as string[],
-        content: t.content, zoneId: t.zone_id, timestamp: t.timestamp,
+      messages,
+      talks: talks.map((t) => ({
+        id: t.id,
+        senderId: t.senderId,
+        receiverIds: t.receiverIds,
+        content: t.content,
+        zoneId: t.zoneId,
+        timestamp: t.timestamp,
       })),
-      broadcasts: broadcasts.map(b => ({
-        id: b.id, senderId: b.sender_id, content: b.content, timestamp: b.timestamp,
+      broadcasts: broadcasts.map((b) => ({
+        id: b.id,
+        senderId: b.senderId,
+        content: b.content,
+        timestamp: b.timestamp,
       })),
-      page,
-      pageSize,
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      total,
     });
   } catch (err) {
     next(err);

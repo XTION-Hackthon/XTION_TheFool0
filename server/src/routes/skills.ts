@@ -36,7 +36,7 @@ skillsRouter.get('/', requireRole('Admin', 'Agent_Player', 'Agent_Viewer'), asyn
 // Requirements: 7.8
 // ---------------------------------------------------------------------------
 
-skillsRouter.get('/:id/install', async (req: Request, res: Response, next: NextFunction) => {
+skillsRouter.get('/:id/install', requireRole('Admin', 'Agent_Player', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contestantId = req.contestantId ?? (req.headers['x-contestant-id'] as string) ?? 'anonymous';
     const content = await docDistributor.installSkill(contestantId, req.params['id'] as string);

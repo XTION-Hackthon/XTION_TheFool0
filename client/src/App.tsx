@@ -5,17 +5,22 @@
  * Requirements: 6.1, 6.5, 6.6, 6.10, 8.4, 8.5, 10.2
  */
 
-import { useEffect, useRef, useState } from 'react';
-import Phaser from 'phaser';
-import { createGame } from './game';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
+import { useGameStore } from './stores/gameStore';
+import { useMessageStore } from './stores/messageStore';
 import { wsClient } from './services/ws-client';
+import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
-import { HeartbeatOverview } from './components/HeartbeatOverview';
-import { AdminPanel } from './components/AdminPanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
+import { useUiStore } from './stores/uiStore';
+import { GameViewport } from './GameViewport';
+import type { Contestant, GameMap, Zone } from '../../server/src/types/index';
+
+const HeartbeatOverview = lazy(() => import('./components/HeartbeatOverview'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 
 // Initialize stores once (wires WebSocket events → Zustand)
 initStores();
@@ -37,54 +42,182 @@ function getStoredKey(): string {
   const params = new URLSearchParams(window.location.search);
   const keyFromUrl = params.get('key');
   if (keyFromUrl) {
-    localStorage.setItem('openclaw_key', keyFromUrl);
-    return keyFromUrl;
+    const normalized = keyFromUrl.trim();
+    localStorage.setItem('openclaw_key', normalized);
+    return normalized;
   }
-  return localStorage.getItem('openclaw_key') ?? '';
+  const stored = localStorage.getItem('openclaw_key') ?? '';
+  const normalized = stored.trim();
+  if (stored !== normalized) {
+    localStorage.setItem('openclaw_key', normalized);
+  }
+  return normalized;
+}
+
+type WorldOverviewResponse = {
+  map: {
+    width: number;
+    height: number;
+    backgroundImage?: string;
+  };
+  zones: Zone[];
+};
+
+type AudienceFeedResponse = {
+  recentBarrages: Array<{
+    id: string;
+    viewerId: string;
+    content: string;
+    timestamp: number;
+  }>;
+  recentBroadcasts: Array<{
+    id: string;
+    senderId: string;
+    content: string;
+    timestamp: number;
+  }>;
+};
+
+type ContestantListItem = {
+  id: string;
+  name: string;
+  status: Contestant['status'];
+  position: Contestant['position'];
+  currentZoneId: string | null;
+  energy?: number;
+  installedSkills?: string[];
+  attributes?: Record<string, unknown>;
+};
+
+function normalizeViewerContestant(raw: ContestantListItem): Contestant {
+  return {
+    id: raw.id,
+    keyId: '',
+    name: raw.name,
+    status: raw.status,
+    position: raw.position,
+    currentZoneId: raw.currentZoneId,
+    energy: raw.energy ?? 100,
+    installedSkills: raw.installedSkills ?? [],
+    attributes: raw.attributes ?? {},
+  };
 }
 
 function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const gameRef = useRef<Phaser.Game | null>(null);
   const [key, setKey] = useState<string>(getStoredKey);
   const [inputKey, setInputKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const role = useRoleStore((s) => s.role);
   const fetchRole = useRoleStore((s) => s.fetchRole);
+  const resetRole = useRoleStore((s) => s.reset);
+  const resetWorld = useGameStore((s) => s.reset);
+  const initWorldState = useGameStore((s) => s.initWorldState);
+  const setConnected = useGameStore((s) => s.setConnected);
+  const resetMessages = useMessageStore((s) => s.reset);
+  const setBroadcastMessages = useMessageStore((s) => s.setBroadcastMessages);
+  const setBarrageMessages = useMessageStore((s) => s.setBarrageMessages);
+  const notifications = useUiStore((s) => s.notifications);
+  const dismissNotification = useUiStore((s) => s.dismissNotification);
 
-  // Connect WebSocket when key is available
+  // Resolve role first. Human_Viewer stays on HTTP snapshots; other roles use WebSocket.
   useEffect(() => {
-    if (!key) return;
+    let active = true;
+    let unsub = () => {};
+    let unsubDisc = () => {};
+    let viewerPoll: ReturnType<typeof setInterval> | null = null;
+
+    if (!key) {
+      wsClient.disconnect();
+      resetRole();
+      resetWorld();
+      resetMessages();
+      setConnecting(false);
+      return;
+    }
 
     setConnecting(true);
-    const wsUrl = getWsUrl();
-    wsClient.connect(wsUrl, key);
+    resetWorld();
+    resetMessages();
 
-    const unsub = wsClient.onConnect(() => {
-      setConnecting(false);
-      // Fetch role after successful connection
-      fetchRole();
-    });
-    const unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
+    void (async () => {
+      try {
+        const roleInfo = await fetchRole();
+        if (!active) return;
+
+        if (!roleInfo) {
+          setConnecting(false);
+          wsClient.disconnect();
+          resetWorld();
+          return;
+        }
+
+        if (roleInfo.role === 'Human_Viewer') {
+          wsClient.disconnect();
+          setConnected(false);
+
+          const loadViewerSnapshot = async () => {
+            const [world, contestants, audienceFeed] = await Promise.all([
+              apiClient.get<WorldOverviewResponse>('/api/world'),
+              apiClient.get<ContestantListItem[]>('/api/contestants'),
+              apiClient.get<AudienceFeedResponse>('/api/audience-feedback'),
+            ]);
+
+            if (!active) return;
+
+            const map: GameMap = {
+              width: world.map.width,
+              height: world.map.height,
+              defaultZoneId: world.zones[0]?.id ?? '',
+              zones: world.zones,
+              ...(world.map.backgroundImage ? { backgroundImage: world.map.backgroundImage } : {}),
+            };
+
+            initWorldState({
+              map,
+              zones: world.zones,
+              contestants: contestants.map(normalizeViewerContestant),
+            });
+            setBroadcastMessages(
+              [...audienceFeed.recentBroadcasts].sort((a, b) => a.timestamp - b.timestamp),
+            );
+            setBarrageMessages(
+              [...audienceFeed.recentBarrages].sort((a, b) => a.timestamp - b.timestamp),
+            );
+            setConnecting(false);
+          };
+
+          await loadViewerSnapshot();
+          viewerPoll = setInterval(() => {
+            void loadViewerSnapshot();
+          }, 5000);
+          return;
+        }
+
+        const wsUrl = getWsUrl();
+        unsub = wsClient.onConnect(() => {
+          setConnecting(false);
+        });
+        unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
+        wsClient.connect(wsUrl, key);
+      } catch {
+        if (!active) return;
+        setConnecting(false);
+        wsClient.disconnect();
+        resetWorld();
+        resetMessages();
+      }
+    })();
 
     return () => {
+      active = false;
       unsub();
       unsubDisc();
+      if (viewerPoll) {
+        clearInterval(viewerPoll);
+      }
       wsClient.disconnect();
     };
-  }, [key, fetchRole]);
-
-  // Mount Phaser game once
-  useEffect(() => {
-    if (!containerRef.current || gameRef.current) return;
-
-    gameRef.current = createGame(containerRef.current);
-
-    return () => {
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
-    };
-  }, []);
+  }, [key, fetchRole, initWorldState, resetMessages, resetRole, resetWorld, setBarrageMessages, setBroadcastMessages, setConnected]);
 
   // Key entry screen — shown when no key is configured
   if (!key) {
@@ -162,8 +295,7 @@ function App() {
         background: '#1a1a2e',
       }}
     >
-      {/* Phaser canvas container */}
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <GameViewport />
 
       {/* Connecting overlay */}
       {connecting && (
@@ -188,6 +320,30 @@ function App() {
         </div>
       )}
 
+      {notifications.map((notification, index) => (
+        <div
+          key={notification.id}
+          onClick={() => dismissNotification(notification.id)}
+          style={{
+            position: 'absolute',
+            top: 16 + index * 52,
+            right: 16,
+            minWidth: 180,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: notification.type === 'error' ? 'rgba(180, 32, 32, 0.95)' : 'rgba(30, 30, 60, 0.95)',
+            color: '#fff',
+            fontSize: 13,
+            fontFamily: 'Arial, sans-serif',
+            zIndex: 1100,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+            cursor: 'pointer',
+          }}
+        >
+          {notification.message}
+        </div>
+      ))}
+
       {/* React UI overlay — talk bubbles, broadcast banner, barrage */}
       <UIOverlay />
       {/* Attribute panel — shown when a Sprite is clicked */}
@@ -195,9 +351,17 @@ function App() {
       {/* Vote buttons — shown when a Sprite is selected (Human_Viewer only) */}
       {role === 'Human_Viewer' && <VoteButtons />}
       {/* Heartbeat overview panel + flash alerts (Admin only) */}
-      {role === 'Admin' && <HeartbeatOverview />}
+      {role === 'Admin' && (
+        <Suspense fallback={null}>
+          <HeartbeatOverview />
+        </Suspense>
+      )}
       {/* Admin panel (Admin only) */}
-      {role === 'Admin' && <AdminPanel />}
+      {role === 'Admin' && (
+        <Suspense fallback={null}>
+          <AdminPanel />
+        </Suspense>
+      )}
       {/* Barrage input (Human_Viewer only) */}
       {role === 'Human_Viewer' && <BarrageInput />}
     </div>

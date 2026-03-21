@@ -217,6 +217,7 @@ export interface ViewerInteractionSummary {
   likeCount: number;
   dislikeCount: number;
   recentBarrages: BarrageMessage[];
+  recentBroadcasts: BroadcastMessage[];
 }
 
 // -----------------------------------------------------------------------------
@@ -376,6 +377,7 @@ export interface ISkillDocManager {
   getDocument(docId: string): Promise<SkillDocument>;
   updateDocument(docId: string, markdownContent: string): Promise<SkillDocument>;
   deleteDocument(docId: string): Promise<void>;
+  listSkillDocuments(): Promise<SkillDocument[]>;
   listDocuments(): Promise<SkillMetadata[]>;
   getVersionHistory(docId: string): Promise<DocumentVersion[]>;
   rollbackToVersion(docId: string, version: string): Promise<SkillDocument>;

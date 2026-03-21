@@ -153,8 +153,8 @@ app.use('/api/admin', authMiddleware, requireRole('Admin'), adminRouter);
 // /api/move, /api/talk, /api/broadcast, /api/heartbeat — Agent_Player + Admin
 router.post('/move', authMiddleware, requireRole('Admin', 'Agent_Player'), moveHandler);
 
-// /api/interaction/barrage, /api/interaction/vote — Human_Viewer + Admin
-router.post('/interaction/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), barrageHandler);
+// /api/barrage, /api/contestants/:id/vote — Human_Viewer + Admin
+router.post('/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), barrageHandler);
 
 // GET 只读端点 — 多角色共享
 router.get('/contestants', authMiddleware, requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), handler);
@@ -178,10 +178,10 @@ router.get('/contestants', authMiddleware, requireRole('Admin', 'Agent_Player', 
 | `POST /api/talk` | ✓ | ✓ | ✗ | ✗ |
 | `POST /api/broadcast` | ✓ | ✓ | ✗ | ✗ |
 | `POST /api/heartbeat` | ✓ | ✓ | ✗ | ✗ |
-| `POST /api/interaction/barrage` | ✓ | ✗ | ✓ | ✗ |
-| `POST /api/interaction/vote` | ✓ | ✗ | ✓ | ✗ |
+| `POST /api/barrage` | ✓ | ✗ | ✓ | ✗ |
+| `POST /api/contestants/:id/vote` | ✓ | ✗ | ✓ | ✗ |
 | `GET /api/admin/*` | ✓ | ✗ | ✗ | ✗ |
-| WebSocket 连接 | ✓ | ✓ | ✗ | ✓ |
+| WebSocket 连接 | ✓ | ✓ | 只读 | ✓ |
 
 ### 4. 服务端：`AuthManager` 扩展
 

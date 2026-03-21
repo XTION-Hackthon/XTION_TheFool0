@@ -22,34 +22,46 @@ interface ContestantRow {
   status: string;
 }
 
+type HeartbeatRequestBody = {
+  contestant_id?: string;
+  contestantId?: string;
+  timestamp?: string | number;
+  payload?: Partial<HeartbeatPayload> & {
+    cpu_load?: number;
+    memory_usage?: number;
+    response_latency_ms?: number;
+  };
+};
+
 function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const key = authHeader.slice(7).trim();
-    if (key) {
-      const keyRow = db.prepare(`
-        SELECT id FROM keys WHERE key = ? AND status = 'active'
-      `).get(key) as { id: string } | undefined;
+  const contestantId = req.contestantId;
+  if (!contestantId) return null;
+  return db.prepare('SELECT id, name, status FROM contestants WHERE id = ?').get(contestantId) as ContestantRow | null;
+}
 
-      if (keyRow) {
-        const contestant = db.prepare(`
-          SELECT id, name, status FROM contestants WHERE key_id = ?
-        `).get(keyRow.id) as ContestantRow | undefined;
-        if (contestant) return contestant;
-      }
-    }
+function normalizeHeartbeatPayload(body: HeartbeatRequestBody): HeartbeatPayload | null {
+  const payload = body.payload;
+  if (!payload) {
+    return null;
   }
 
-  // Fallback: use contestant_id from body
-  const { contestant_id } = req.body as { contestant_id?: string };
-  if (contestant_id) {
-    const contestant = db.prepare(`
-      SELECT id, name, status FROM contestants WHERE id = ?
-    `).get(contestant_id) as ContestantRow | undefined;
-    if (contestant) return contestant;
+  const cpuLoad = payload.cpuLoad ?? payload.cpu_load;
+  const memoryUsage = payload.memoryUsage ?? payload.memory_usage;
+  const responseLatency = payload.responseLatency ?? payload.response_latency_ms;
+
+  if (
+    typeof cpuLoad !== 'number' ||
+    typeof memoryUsage !== 'number' ||
+    typeof responseLatency !== 'number'
+  ) {
+    return null;
   }
 
-  return null;
+  return {
+    cpuLoad,
+    memoryUsage,
+    responseLatency,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -60,30 +72,26 @@ heartbeatRouter.post('/', requireRole('Admin', 'Agent_Player'), (req: Request, r
   const contestant = getContestantFromRequest(req);
   if (!contestant) {
     const body: ErrorResponse = {
-      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key 或 contestant_id' },
+      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key' },
     };
     res.status(401).json(body);
     return;
   }
 
-  const { payload } = req.body as {
-    payload?: Partial<HeartbeatPayload>;
-  };
+  const normalizedPayload = normalizeHeartbeatPayload(req.body as HeartbeatRequestBody);
 
-  if (
-    !payload ||
-    typeof payload.cpuLoad !== 'number' ||
-    typeof payload.memoryUsage !== 'number' ||
-    typeof payload.responseLatency !== 'number'
-  ) {
+  if (!normalizedPayload) {
     const body: ErrorResponse = {
-      error: { code: 'SYS_INVALID_PARAMS', message: 'payload 必须包含 cpuLoad, memoryUsage, responseLatency' },
+      error: {
+        code: 'SYS_INVALID_PARAMS',
+        message: 'payload 必须包含 cpuLoad, memoryUsage, responseLatency（兼容旧字段 cpu_load, memory_usage, response_latency_ms）',
+      },
     };
     res.status(400).json(body);
     return;
   }
 
-  heartbeatMonitor.onHeartbeat(contestant.id, payload as HeartbeatPayload);
+  heartbeatMonitor.onHeartbeat(contestant.id, normalizedPayload);
 
   res.status(200).json({
     serverTimestamp: Date.now(),

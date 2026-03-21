@@ -9,6 +9,7 @@ import type * as http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { authManager } from './modules/auth-manager';
+import { adminMapConfigStore } from './modules/admin-map-config';
 import { docDistributor } from './modules/doc-distributor';
 import { heartbeatMonitor } from './modules/heartbeat-monitor';
 import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } from './types/index';
@@ -18,6 +19,7 @@ import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } fro
 // ---------------------------------------------------------------------------
 
 export const connections = new Map<string, WebSocket>();
+export const observerConnections = new Set<WebSocket>();
 
 // Disconnect timers — contestantId → NodeJS.Timeout
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -92,20 +94,25 @@ function upsertContestant(keyId: string, name: string, position: Position, zoneI
   `).get(keyId) as ContestantRow | undefined;
 
   if (existing) {
-    // Update existing contestant to online
+    const reconnectZoneId = existing.current_zone_id ?? zoneId;
+    const reconnectPosition: Position = existing.current_zone_id
+      ? { x: existing.position_x, y: existing.position_y }
+      : position;
+
+    // Reconnect: keep prior location and only restore online state.
     db.prepare(`
       UPDATE contestants
       SET status = 'online', position_x = ?, position_y = ?, current_zone_id = ?, connected_at = ?, disconnected_at = NULL
       WHERE key_id = ?
-    `).run(position.x, position.y, zoneId, now, keyId);
+    `).run(reconnectPosition.x, reconnectPosition.y, reconnectZoneId, now, keyId);
 
     return {
       id: existing.id,
       keyId,
       name: existing.name,
       status: 'online',
-      position,
-      currentZoneId: zoneId,
+      position: reconnectPosition,
+      currentZoneId: reconnectZoneId,
       energy: existing.energy,
       installedSkills: JSON.parse(existing.installed_skills) as string[],
       attributes: JSON.parse(existing.attributes) as Record<string, unknown>,
@@ -165,6 +172,32 @@ function rowToContestant(row: ContestantRow): Contestant {
   };
 }
 
+function getHeartbeatSummary(contestantId: string) {
+  const latest = heartbeatMonitor.getHistory(contestantId, 1)[0];
+  return {
+    healthStatus: heartbeatMonitor.getHealthStatus(contestantId),
+    lastTimestamp: latest?.timestamp ?? null,
+    cpuLoad: latest?.payload.cpuLoad ?? null,
+    memoryUsage: latest?.payload.memoryUsage ?? null,
+    responseLatency: latest?.payload.responseLatency ?? null,
+  };
+}
+
+function buildContestantPayload(contestant: Contestant) {
+  return {
+    id: contestant.id,
+    name: contestant.name,
+    position: contestant.position,
+    zone: contestant.currentZoneId,
+    status: contestant.status,
+    energy: contestant.energy,
+    attributes: {
+      ...contestant.attributes,
+      heartbeat: getHeartbeatSummary(contestant.id),
+    },
+  };
+}
+
 function getAllZones(): Zone[] {
   const rows = db.prepare(`
     SELECT id, name, x1, y1, x2, y2, zone_type_id, fill_color, border_color, opacity, icon, access_restriction
@@ -202,6 +235,18 @@ function getMapDimensions(): { width: number; height: number } {
   };
 }
 
+function buildWorldMapPayload(zones: Zone[]) {
+  const mapDims = getMapDimensions();
+  const mapConfig = adminMapConfigStore.getConfig();
+
+  return {
+    width: mapDims.width,
+    height: mapDims.height,
+    zones,
+    ...(mapConfig.backgroundImage ? { backgroundImage: mapConfig.backgroundImage } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Auth handler
 // ---------------------------------------------------------------------------
@@ -212,10 +257,11 @@ async function handleAuth(
   registerContestant: (id: string) => void,
 ): Promise<void> {
   const ws = client.ws;
-  const { key, name } = payload;
+  const normalizedKey = payload.key.trim();
+  const { name } = payload;
 
   // Validate key
-  const result = await authManager.validateKey(key);
+  const result = await authManager.validateKey(normalizedKey);
   if (!result.valid || !result.keyId) {
     sendError(ws, 'AUTH_INVALID_KEY', 'Key 无效或已被吊销');
     ws.close(1008, 'AUTH_INVALID_KEY');
@@ -228,7 +274,6 @@ async function handleAuth(
   // Store role in connection context
   client.role = role;
 
-  // Human_Viewer is not allowed to connect via WebSocket
   if (role === 'Human_Viewer') {
     sendError(ws, 'AUTH_ROLE_NOT_ALLOWED', '人类观众角色不允许建立 WebSocket 连接');
     ws.close(1008, 'AUTH_ROLE_NOT_ALLOWED');
@@ -249,25 +294,15 @@ async function handleAuth(
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
   const contestantName = name ?? keyRow?.contestant_name ?? 'Unknown';
 
-  // Agent_Viewer: allow connection and push world.state, but mark as read-only (no contestant registration)
+  // Agent_Viewer: allow read-only connection and push world.state.
   if (role === 'Agent_Viewer') {
+    observerConnections.add(ws);
     const zones = getAllZones();
-    const mapDims = getMapDimensions();
     const onlineContestants = getAllOnlineContestants();
 
     const worldStatePayload = {
-      map: {
-        width: mapDims.width,
-        height: mapDims.height,
-        zones,
-      },
-      contestants: onlineContestants.map((c) => ({
-        id: c.id,
-        name: c.name,
-        position: c.position,
-        zone: c.currentZoneId,
-        status: c.status,
-      })),
+      map: buildWorldMapPayload(zones),
+      contestants: onlineContestants.map(buildContestantPayload),
     };
 
     sendEvent(ws, {
@@ -293,30 +328,12 @@ async function handleAuth(
 
   // Build world.state payload
   const zones = getAllZones();
-  const mapDims = getMapDimensions();
   const onlineContestants = getAllOnlineContestants();
 
   const worldStatePayload = {
-    map: {
-      width: mapDims.width,
-      height: mapDims.height,
-      zones,
-    },
-    contestants: onlineContestants.map((c) => ({
-      id: c.id,
-      name: c.name,
-      position: c.position,
-      zone: c.currentZoneId,
-      status: c.status,
-    })),
-    self: {
-      id: contestant.id,
-      name: contestant.name,
-      position: contestant.position,
-      zone: contestant.currentZoneId,
-      energy: contestant.energy,
-      status: contestant.status,
-    },
+    map: buildWorldMapPayload(zones),
+    contestants: onlineContestants.map(buildContestantPayload),
+    self: buildContestantPayload(contestant),
   };
 
   sendEvent(ws, {
@@ -330,11 +347,7 @@ async function handleAuth(
     {
       type: 'contestant.join',
       payload: {
-        id: contestant.id,
-        name: contestant.name,
-        position: contestant.position,
-        zone: contestant.currentZoneId,
-        status: contestant.status,
+        ...buildContestantPayload(contestant),
       },
       timestamp: Date.now(),
     },
@@ -376,6 +389,10 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     });
 
     ws.on('close', () => {
+      if (client.role === 'Agent_Viewer') {
+        observerConnections.delete(ws);
+      }
+
       if (client.contestantId) {
         connections.delete(client.contestantId);
         heartbeatMonitor.unregister(client.contestantId);
@@ -417,8 +434,9 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 // Message routing
 // ---------------------------------------------------------------------------
 
-// Game command types that Agent_Viewer is not allowed to send
+// Agent_Viewer is not allowed to send gameplay command messages.
 const GAME_COMMAND_TYPES = new Set(['move', 'talk', 'broadcast', 'heartbeat']);
+const READ_ONLY_ROLES = new Set<Role>(['Agent_Viewer']);
 
 export function handleMessage(
   client: ClientContext,
@@ -427,9 +445,8 @@ export function handleMessage(
 ): void {
   const ws = client.ws;
 
-  // Agent_Viewer: intercept game command messages and return error
-  if (client.role === 'Agent_Viewer' && GAME_COMMAND_TYPES.has(msg.type)) {
-    sendError(ws, 'FORBIDDEN_ROLE', '观察者角色不能发送游戏指令');
+  if (client.role && READ_ONLY_ROLES.has(client.role) && GAME_COMMAND_TYPES.has(msg.type)) {
+    sendError(ws, 'FORBIDDEN_ROLE', '只读角色不能发送游戏指令');
     return;
   }
 
@@ -440,7 +457,7 @@ export function handleMessage(
 
     case 'auth': {
       const payload = msg.payload as { key: string; name?: string };
-      if (!payload?.key) {
+      if (!payload?.key || !payload.key.trim()) {
         sendError(ws, 'AUTH_MISSING_KEY', '认证消息缺少 key 字段');
         return;
       }
@@ -468,11 +485,18 @@ export function sendEvent(ws: WebSocket, event: ServerEvent): void {
   }
 }
 
+export function broadcastToObservers(event: ServerEvent): void {
+  for (const ws of observerConnections) {
+    sendEvent(ws, event);
+  }
+}
+
 export function broadcast(event: ServerEvent, exclude?: string): void {
   for (const [id, ws] of connections) {
     if (exclude && id === exclude) continue;
     sendEvent(ws, event);
   }
+  broadcastToObservers(event);
 }
 
 function sendError(ws: WebSocket, code: string, message: string): void {

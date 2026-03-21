@@ -78,3 +78,36 @@ tips：不同的心情属性会影响他们每人可使用的调色盘，越沮�
 
 第十幕：人类观众的感想点评
 线下常规活动，大家可开放麦发言
+
+## 本地开发
+
+先分别启动后端和前端：
+
+```bash
+npm run dev:server
+npm run dev:client
+```
+
+后端默认监听 `http://localhost:3000`，前端 Vite 默认监听 `http://localhost:5173`，并把 `/api` 和 `/ws` 代理到后端。
+
+## Key Bootstrap
+
+当前仓库不会自动 seed 第一把 `Admin` key。第一次本地启动时，先执行：
+
+```bash
+npm run bootstrap:admin -- LocalAdmin
+```
+
+它会直接向本地 SQLite `data/xtion.db` 写入一条 active 的 `Admin` key，并把明文 key 打印出来。
+
+拿到 admin key 后，可以继续批量生成其他 key：
+
+```bash
+XTION_ADMIN_KEY=<你的 admin key> npm run generate:keys -- 5 Agent Agent_Player
+```
+
+可选角色：
+- `Admin`
+- `Agent_Player`
+- `Human_Viewer`
+- `Agent_Viewer`

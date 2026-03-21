@@ -47,6 +47,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function KeysTab() {
   const [keys, setKeys] = useState<Key[]>([]);
   const [newName, setNewName] = useState('');
+  const [newRole, setNewRole] = useState<Key['role']>('Agent_Player');
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -62,8 +63,9 @@ function KeysTab() {
     if (!newName.trim()) return;
     setLoading(true);
     try {
-      await apiClient.post('/api/admin/keys', { contestantName: newName });
+      await apiClient.post('/api/admin/keys', { name: newName, role: newRole });
       setNewName('');
+      setNewRole('Agent_Player');
       await load();
     } finally {
       setLoading(false);
@@ -85,6 +87,12 @@ function KeysTab() {
       <SectionTitle>生成新 Key</SectionTitle>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input style={{ ...inputStyle, flex: 1 }} placeholder="选手名称" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <select style={{ ...inputStyle, width: 160 }} value={newRole} onChange={(e) => setNewRole(e.target.value as Key['role'])}>
+          <option value="Admin">Admin</option>
+          <option value="Agent_Player">Agent_Player</option>
+          <option value="Human_Viewer">Human_Viewer</option>
+          <option value="Agent_Viewer">Agent_Viewer</option>
+        </select>
         <button style={btnStyle('primary')} onClick={generate} disabled={loading}>生成</button>
       </div>
       <SectionTitle>Key 列表</SectionTitle>
@@ -94,6 +102,7 @@ function KeysTab() {
             <div>
               <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{k.contestantName}</span>
               <span style={{ color: k.status === 'active' ? '#4ade80' : '#f87171', marginLeft: 8 }}>{k.status}</span>
+              <span style={{ color: '#a78bfa', marginLeft: 8 }}>{k.role}</span>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button style={btnStyle('ghost')} onClick={() => regenerate(k.id)}>重新生成</button>
@@ -242,13 +251,13 @@ function SkillsTab() {
 
   const upload = async () => {
     if (!content.trim()) return;
-    try { await apiClient.post('/api/admin/skills', { markdownContent: content }); } catch { /* ignore */ }
+    try { await apiClient.post('/api/admin/skills', { content }); } catch { /* ignore */ }
     setContent('');
     await load();
   };
 
   const update = async (id: string) => {
-    try { await apiClient.put(`/api/admin/skills/${id}`, { markdownContent: content }); } catch { /* ignore */ }
+    try { await apiClient.put(`/api/admin/skills/${id}`, { content }); } catch { /* ignore */ }
     setEditingId(null);
     setContent('');
     await load();
@@ -285,7 +294,15 @@ function SkillsTab() {
               {s.isDefault && <span style={{ color: '#facc15', marginLeft: 6 }}>内置</span>}
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button style={btnStyle('ghost')} onClick={() => { setEditingId(s.id); setContent(s.markdownContent); }}>编辑</button>
+              <button
+                style={btnStyle('ghost')}
+                onClick={() => {
+                  setEditingId(s.id);
+                  setContent((s as SkillDocument & { content?: string }).content ?? s.markdownContent);
+                }}
+              >
+                编辑
+              </button>
               <button style={btnStyle('ghost')} onClick={() => loadVersions(s.id)}>版本</button>
               {!s.isDefault && <button style={btnStyle('danger')} onClick={() => deleteSkill(s.id)}>删除</button>}
             </div>
@@ -348,7 +365,7 @@ function DocsTab() {
   useEffect(() => { load(selectedDoc); }, [selectedDoc, load]);
 
   const save = async () => {
-    try { await apiClient.put(`/api/admin/docs/${selectedDoc}`, { markdownContent: content }); } catch { /* ignore */ }
+    try { await apiClient.put(`/api/admin/docs/${selectedDoc}`, { content }); } catch { /* ignore */ }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -376,7 +393,7 @@ function DocsTab() {
 // ─── Heartbeat Config Tab ─────────────────────────────────────────────────────
 
 function HeartbeatConfigTab() {
-  const [config, setConfig] = useState<HeartbeatConfig>({ interval: 5000, timeout: 15000 });
+  const [config, setConfig] = useState<HeartbeatConfig>({ interval: 10, timeout: 30 });
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -394,12 +411,12 @@ function HeartbeatConfigTab() {
   return (
     <div>
       <SectionTitle>心跳配置</SectionTitle>
-      <Field label={`心跳间隔 (ms) — 当前: ${config.interval}ms (${config.interval / 1000}s)`}>
-        <input style={inputStyle} type="range" min={1000} max={30000} step={1000} value={config.interval}
+      <Field label={`心跳间隔 (秒) — 当前: ${config.interval}s`}>
+        <input style={inputStyle} type="range" min={1} max={30} step={1} value={config.interval}
           onChange={(e) => setConfig({ ...config, interval: Number(e.target.value) })} />
       </Field>
-      <Field label={`心跳超时 (ms) — 当前: ${config.timeout}ms (${config.timeout / 1000}s)`}>
-        <input style={inputStyle} type="range" min={3000} max={120000} step={1000} value={config.timeout}
+      <Field label={`心跳超时 (秒) — 当前: ${config.timeout}s`}>
+        <input style={inputStyle} type="range" min={3} max={120} step={1} value={config.timeout}
           onChange={(e) => setConfig({ ...config, timeout: Number(e.target.value) })} />
       </Field>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -415,6 +432,12 @@ function HeartbeatConfigTab() {
 function MapConfigTab() {
   const [bgImage, setBgImage] = useState('');
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    apiClient.get<{ backgroundImage?: string | null }>('/api/admin/map')
+      .then((data) => setBgImage(data.backgroundImage ?? ''))
+      .catch(() => { /* ignore */ });
+  }, []);
 
   const save = async () => {
     try { await apiClient.put('/api/admin/map', { backgroundImage: bgImage }); } catch { /* ignore */ }
@@ -443,9 +466,51 @@ function MapConfigTab() {
 
 interface MonitorData {
   onlineCount: number;
-  zoneDistribution: Record<string, number>;
-  apiCallRate: number;
-  heartbeatAnomalies: string[];
+  zonePopulation: Array<{
+    zoneId?: string;
+    zoneName?: string;
+    zone_id?: string;
+    zone_name?: string;
+    count: number;
+  }>;
+  recentApiCallsPerMinute: number;
+  heartbeatAnomalies: Array<{
+    contestantId: string;
+    healthStatus?: string;
+  }>;
+}
+
+interface LegacyMonitorData {
+  onlineCount: number;
+  zoneDistribution?: Record<string, number>;
+  apiCallRate?: number;
+  heartbeatAnomalies?: string[];
+}
+
+function normalizeMonitorData(raw: MonitorData | LegacyMonitorData): MonitorData {
+  const legacy = raw as LegacyMonitorData;
+  const normalizedZonePopulation = Array.isArray((raw as MonitorData).zonePopulation)
+    ? (raw as MonitorData).zonePopulation
+    : Object.entries(legacy.zoneDistribution ?? {}).map(([zoneName, count]) => ({
+      zoneName,
+      count,
+    }));
+
+  const normalizedAnomalies = Array.isArray((raw as MonitorData).heartbeatAnomalies)
+    ? (raw as MonitorData).heartbeatAnomalies.map((item) => {
+      if (typeof item === 'string') {
+        return { contestantId: item };
+      }
+      return item;
+    })
+    : [];
+
+  return {
+    onlineCount: raw.onlineCount ?? 0,
+    zonePopulation: normalizedZonePopulation,
+    recentApiCallsPerMinute: (raw as MonitorData).recentApiCallsPerMinute ?? legacy.apiCallRate ?? 0,
+    heartbeatAnomalies: normalizedAnomalies,
+  };
 }
 
 function MonitorTab() {
@@ -453,8 +518,8 @@ function MonitorTab() {
 
   const load = useCallback(async () => {
     try {
-      const data = await apiClient.get<MonitorData>('/api/admin/monitor');
-      setData(data);
+      const raw = await apiClient.get<MonitorData | LegacyMonitorData>('/api/admin/monitor');
+      setData(normalizeMonitorData(raw));
     } catch { /* ignore */ }
   }, []);
 
@@ -475,24 +540,31 @@ function MonitorTab() {
           <div style={{ color: '#9ca3af', fontSize: 11 }}>在线选手</div>
         </div>
         <div style={{ background: 'rgba(120,180,255,0.1)', border: '1px solid rgba(120,180,255,0.3)', borderRadius: 8, padding: 12, textAlign: 'center' }}>
-          <div style={{ color: '#7ec8ff', fontSize: 24, fontWeight: 700 }}>{data.apiCallRate}</div>
+          <div style={{ color: '#7ec8ff', fontSize: 24, fontWeight: 700 }}>{data.recentApiCallsPerMinute}</div>
           <div style={{ color: '#9ca3af', fontSize: 11 }}>API 调用/分钟</div>
         </div>
       </div>
 
       <SectionTitle>Zone 人数分布</SectionTitle>
-      {Object.entries(data.zoneDistribution).map(([zone, count]) => (
-        <div key={zone} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-          <span style={{ color: '#e5e7eb' }}>{zone}</span>
-          <span style={{ color: '#7ec8ff' }}>{count} 人</span>
-        </div>
-      ))}
+      {data.zonePopulation.map((zone) => {
+        const zoneKey = zone.zoneId ?? zone.zone_id ?? zone.zoneName ?? zone.zone_name ?? 'unknown';
+        const zoneLabel = zone.zoneName ?? zone.zone_name ?? zone.zoneId ?? zone.zone_id ?? 'Unknown Zone';
+        return (
+          <div key={zoneKey} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <span style={{ color: '#e5e7eb' }}>{zoneLabel}</span>
+            <span style={{ color: '#7ec8ff' }}>{zone.count} 人</span>
+          </div>
+        );
+      })}
 
       {data.heartbeatAnomalies.length > 0 && (
         <>
           <SectionTitle>心跳异常</SectionTitle>
-          {data.heartbeatAnomalies.map((id) => (
-            <div key={id} style={{ color: '#f87171', fontSize: 11, padding: '3px 0' }}>⚠ {id}</div>
+          {data.heartbeatAnomalies.map((item) => (
+            <div key={item.contestantId} style={{ color: '#f87171', fontSize: 11, padding: '3px 0' }}>
+              ⚠ {item.contestantId}
+              {item.healthStatus ? ` (${item.healthStatus})` : ''}
+            </div>
           ))}
         </>
       )}

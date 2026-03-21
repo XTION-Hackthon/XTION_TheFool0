@@ -66,7 +66,7 @@
 
 #### 验收标准
 
-1. THE Human_Viewer SHALL 拥有访问观众互动 API 的权限：`POST /api/interaction/barrage`（发送弹幕）、`POST /api/interaction/vote`（点赞/踩）
+1. THE Human_Viewer SHALL 拥有访问观众互动 API 的权限：`POST /api/barrage`（发送弹幕）、`POST /api/contestants/:id/vote`（点赞/踩）
 2. THE Human_Viewer SHALL 拥有访问公开只读端点的权限：`GET /api/contestants`、`GET /api/zones`、`GET /api/world`、`GET /api/audience-feedback`
 3. IF Human_Viewer 尝试调用任意游戏 API（`/api/move`、`/api/talk`、`/api/broadcast`、`/api/heartbeat`），THEN THE Authorization_Middleware SHALL 返回 HTTP 403 错误并附带错误码 `FORBIDDEN_ROLE` 和提示"观众角色无权调用游戏接口"
 4. IF Human_Viewer 尝试访问任意 `/api/admin/*` 端点，THEN THE Authorization_Middleware SHALL 返回 HTTP 403 错误并附带错误码 `FORBIDDEN_ROLE`

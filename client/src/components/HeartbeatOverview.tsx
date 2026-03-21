@@ -11,6 +11,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useGameStore } from '../stores/gameStore';
 import { useUiStore } from '../stores/uiStore';
+import { apiClient } from '../services/api-client';
 import type { Contestant, HeartbeatRecord } from '../../../server/src/types/index';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -163,10 +164,10 @@ export function HeartbeatOverview() {
       const results = await Promise.allSettled(
         entries.map(async (c) => {
           try {
-            const res = await fetch(`/api/admin/contestants/${c.id}/heartbeat-history?limit=1`);
-            if (!res.ok) return { id: c.id, name: c.name, status: c.status, record: null };
-            const data = await res.json() as { records: HeartbeatRecord[] };
-            return { id: c.id, name: c.name, status: c.status, record: data.records?.[0] ?? null };
+            const data = await apiClient.get<{ contestantId: string; history: HeartbeatRecord[] }>(
+              `/api/admin/contestants/${c.id}/heartbeat-history?limit=1`,
+            );
+            return { id: c.id, name: c.name, status: c.status, record: data.history?.[0] ?? null };
           } catch {
             return { id: c.id, name: c.name, status: c.status, record: null };
           }

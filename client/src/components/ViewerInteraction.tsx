@@ -25,7 +25,7 @@ export function BarrageInput() {
     setSending(true);
     try {
       await apiClient.post('/api/barrage', {
-        viewerId: 'viewer-' + Math.random().toString(36).slice(2, 8),
+        viewer_id: 'viewer-' + Math.random().toString(36).slice(2, 8),
         content: trimmed,
       });
       setText('');
@@ -108,7 +108,7 @@ export function VoteButtons() {
     try {
       await apiClient.post(`/api/contestants/${selectedId}/vote`, {
         type,
-        viewerId: 'viewer-' + Math.random().toString(36).slice(2, 8),
+        viewer_id: 'viewer-' + Math.random().toString(36).slice(2, 8),
       });
       setVoted(type);
       setVotes((prev) => prev ? {

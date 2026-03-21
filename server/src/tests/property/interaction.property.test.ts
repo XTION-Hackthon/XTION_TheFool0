@@ -23,6 +23,10 @@ function makeDb() {
       id TEXT PRIMARY KEY, viewer_id TEXT NOT NULL,
       content TEXT NOT NULL, timestamp INTEGER NOT NULL
     );
+    CREATE TABLE broadcast_messages (
+      id TEXT PRIMARY KEY, sender_id TEXT NOT NULL,
+      content TEXT NOT NULL, timestamp INTEGER NOT NULL
+    );
     CREATE TABLE vote_records (
       id TEXT PRIMARY KEY, contestant_id TEXT NOT NULL,
       viewer_id TEXT NOT NULL, type TEXT NOT NULL, timestamp INTEGER NOT NULL

@@ -15,6 +15,7 @@ import { moveRouter } from './routes/move';
 import { heartbeatRouter } from './routes/heartbeat';
 import { adminHeartbeatRouter } from './routes/admin-heartbeat';
 import { adminSkillsRouter } from './routes/admin-skills';
+import { adminMapRouter } from './routes/admin-map';
 import { skillsRouter } from './routes/skills';
 import { docsRouter, adminDocsRouter } from './routes/docs';
 import { eventsRouter } from './routes/events';
@@ -23,6 +24,7 @@ import { statusRouter } from './routes/status';
 import { adminMonitorRouter } from './routes/admin-monitor';
 import { authRouter } from './routes/auth';
 import { authMiddleware, requireRole } from './middleware/auth';
+import { rateLimitMiddleware } from './modules/rate-limiter';
 
 export const app = express();
 
@@ -61,6 +63,8 @@ app.get('/api/docs', (_req: Request, res: Response) => {
       '/api/contestants/{id}/vote': { post: { summary: '点赞/踩', tags: ['Audience'] } },
       '/api/audience-feedback': { get: { summary: '观众互动数据汇总', tags: ['Audience'] } },
       '/api/admin/keys': { post: { summary: '生成 Key', tags: ['Admin'] }, get: { summary: '获取 Key 列表', tags: ['Admin'] } },
+      '/api/admin/map': { get: { summary: '获取地图配置', tags: ['Admin'] }, put: { summary: '更新地图配置', tags: ['Admin'] } },
+      '/api/admin/skills': { get: { summary: '获取 Skill 文档列表', tags: ['Admin'] }, post: { summary: '上传 Skill 文档', tags: ['Admin'] } },
       '/api/admin/monitor': { get: { summary: '平台运行状态概览', tags: ['Admin'] } },
     },
   });
@@ -76,22 +80,23 @@ app.get('/health', (_req: Request, res: Response) => {
 // Routes
 // ---------------------------------------------------------------------------
 
-app.use('/api/admin/keys', authMiddleware, requireRole('Admin'), adminKeysRouter);
-app.use('/api/admin', authMiddleware, requireRole('Admin'), adminZonesRouter);
-app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMoveRouter);
-app.use('/api/talk', authMiddleware, talkRouter);
-app.use('/api/broadcast', authMiddleware, broadcastRouter);
-app.use('/api/move', authMiddleware, moveRouter);
-app.use('/api/heartbeat', authMiddleware, heartbeatRouter);
-app.use('/api/admin', authMiddleware, requireRole('Admin'), adminHeartbeatRouter);
-app.use('/api/admin/skills', authMiddleware, requireRole('Admin'), adminSkillsRouter);
-app.use('/api/skills', authMiddleware, skillsRouter);
-app.use('/api/docs', authMiddleware, docsRouter);
-app.use('/api/admin/docs', authMiddleware, requireRole('Admin'), adminDocsRouter);
-app.use('/api', authMiddleware, eventsRouter);
+app.use('/api/admin/keys', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminKeysRouter);
+app.use('/api/admin', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminZonesRouter);
+app.use('/api/admin', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminMoveRouter);
+app.use('/api/talk', authMiddleware, rateLimitMiddleware, requireRole('Admin', 'Agent_Player'), talkRouter);
+app.use('/api/broadcast', authMiddleware, rateLimitMiddleware, requireRole('Admin', 'Agent_Player'), broadcastRouter);
+app.use('/api/move', authMiddleware, rateLimitMiddleware, moveRouter);
+app.use('/api/heartbeat', authMiddleware, rateLimitMiddleware, heartbeatRouter);
+app.use('/api/admin', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminHeartbeatRouter);
+app.use('/api/admin/skills', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminSkillsRouter);
+app.use('/api/admin', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminMapRouter);
+app.use('/api/skills', authMiddleware, rateLimitMiddleware, skillsRouter);
+app.use('/api/docs', authMiddleware, rateLimitMiddleware, docsRouter);
+app.use('/api/admin/docs', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminDocsRouter);
+app.use('/api/events', authMiddleware, rateLimitMiddleware, eventsRouter);
 app.use('/api', interactionRouter);
-app.use('/api', authMiddleware, statusRouter);
-app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);
+app.use('/api', authMiddleware, rateLimitMiddleware, statusRouter);
+app.use('/api/admin', authMiddleware, rateLimitMiddleware, requireRole('Admin'), adminMonitorRouter);
 app.use('/api/auth', authRouter);
 
 // ---------------------------------------------------------------------------
