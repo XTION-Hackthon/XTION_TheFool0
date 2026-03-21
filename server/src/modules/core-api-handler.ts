@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
 import { worldManager } from './world-manager';
 import { rateLimiter } from './rate-limiter';
-import { connections, sendEvent } from '../ws';
+import { broadcastToObservers, connections, sendEvent } from '../ws';
 import type {
   ICoreAPIHandler,
   TalkParams,
@@ -124,6 +124,7 @@ class CoreAPIHandler implements ICoreAPIHandler {
         sendEvent(ws, event);
       }
     }
+    broadcastToObservers(event);
 
     // Work 区 Talk 扣减 Energy
     // Requirements: 11.5
@@ -135,7 +136,7 @@ class CoreAPIHandler implements ICoreAPIHandler {
       const newEnergy = await worldManager.modifyEnergy(senderId, -talkWorkEffect.rate);
       const senderWs = connections.get(senderId);
       if (senderWs) {
-        sendEvent(senderWs, {
+        const energyEvent: ServerEvent = {
           type: 'energy.update',
           payload: {
             contestantId: senderId,
@@ -144,7 +145,9 @@ class CoreAPIHandler implements ICoreAPIHandler {
             reason: 'talk_in_work_zone',
           },
           timestamp,
-        });
+        };
+        sendEvent(senderWs, energyEvent);
+        broadcastToObservers(energyEvent);
       }
     }
 
@@ -209,11 +212,11 @@ class CoreAPIHandler implements ICoreAPIHandler {
       timestamp,
     };
 
-    let recipientCount = 0;
+    const recipientCount = connections.size;
     for (const ws of connections.values()) {
       sendEvent(ws, event);
-      recipientCount++;
     }
+    broadcastToObservers(event);
 
     // Work 区 Broadcast 扣减 Energy
     // Requirements: 11.5
@@ -225,7 +228,7 @@ class CoreAPIHandler implements ICoreAPIHandler {
       const newEnergy = await worldManager.modifyEnergy(senderId, -bcWorkEffect.rate);
       const senderWs = connections.get(senderId);
       if (senderWs) {
-        sendEvent(senderWs, {
+        const energyEvent: ServerEvent = {
           type: 'energy.update',
           payload: {
             contestantId: senderId,
@@ -234,7 +237,9 @@ class CoreAPIHandler implements ICoreAPIHandler {
             reason: 'broadcast_in_work_zone',
           },
           timestamp,
-        });
+        };
+        sendEvent(senderWs, energyEvent);
+        broadcastToObservers(energyEvent);
       }
     }
 
@@ -361,7 +366,7 @@ class CoreAPIHandler implements ICoreAPIHandler {
       const newRule = worldManager.getApplicableRules(contestantId);
       const ws = connections.get(contestantId);
       if (ws) {
-        sendEvent(ws, {
+        const zoneRuleEvent: ServerEvent = {
           type: 'zone.rule.update',
           payload: {
             zoneId: newZone.id,
@@ -370,7 +375,9 @@ class CoreAPIHandler implements ICoreAPIHandler {
             rule: newRule,
           },
           timestamp,
-        });
+        };
+        sendEvent(ws, zoneRuleEvent);
+        broadcastToObservers(zoneRuleEvent);
       }
     }
 
@@ -385,7 +392,7 @@ class CoreAPIHandler implements ICoreAPIHandler {
         const newEnergy = await worldManager.modifyEnergy(contestantId, -workEffect.rate);
         const ws = connections.get(contestantId);
         if (ws) {
-          sendEvent(ws, {
+          const energyEvent: ServerEvent = {
             type: 'energy.update',
             payload: {
               contestantId,
@@ -394,7 +401,9 @@ class CoreAPIHandler implements ICoreAPIHandler {
               reason: 'move_in_work_zone',
             },
             timestamp,
-          });
+          };
+          sendEvent(ws, energyEvent);
+          broadcastToObservers(energyEvent);
         }
       }
     }

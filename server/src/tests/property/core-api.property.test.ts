@@ -71,15 +71,17 @@ vi.mock('../../modules/rate-limiter', () => ({
   },
 }));
 
-const { mockSendEvent, mockConnections } = vi.hoisted(() => {
+const { mockSendEvent, mockBroadcastToObservers, mockConnections } = vi.hoisted(() => {
   const mockConnections = new Map<string, { readyState: number; send: ReturnType<typeof vi.fn> }>();
   const mockSendEvent = vi.fn();
-  return { mockSendEvent, mockConnections };
+  const mockBroadcastToObservers = vi.fn();
+  return { mockSendEvent, mockBroadcastToObservers, mockConnections };
 });
 
 vi.mock('../../ws', () => ({
   connections: mockConnections,
   sendEvent: mockSendEvent,
+  broadcastToObservers: mockBroadcastToObservers,
 }));
 
 // ---------------------------------------------------------------------------

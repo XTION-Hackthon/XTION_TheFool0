@@ -5,9 +5,7 @@
  * Requirements: 6.1, 6.5, 6.6, 6.10, 8.4, 8.5, 10.2
  */
 
-import { useEffect, useRef, useState } from 'react';
-import Phaser from 'phaser';
-import { createGame } from './game';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
 import { useGameStore } from './stores/gameStore';
@@ -15,10 +13,12 @@ import { wsClient } from './services/ws-client';
 import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
-import { HeartbeatOverview } from './components/HeartbeatOverview';
-import { AdminPanel } from './components/AdminPanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
 import { useUiStore } from './stores/uiStore';
+import { GameViewport } from './GameViewport';
+
+const HeartbeatOverview = lazy(() => import('./components/HeartbeatOverview'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
 
 // Initialize stores once (wires WebSocket events → Zustand)
 initStores();
@@ -47,8 +47,6 @@ function getStoredKey(): string {
 }
 
 function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const gameRef = useRef<Phaser.Game | null>(null);
   const [key, setKey] = useState<string>(getStoredKey);
   const [inputKey, setInputKey] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -139,18 +137,6 @@ function App() {
     };
   }, [key, fetchRole, resetRole, initWorldState, resetWorld]);
 
-  // Mount Phaser game once
-  useEffect(() => {
-    if (!containerRef.current || gameRef.current) return;
-
-    gameRef.current = createGame(containerRef.current);
-
-    return () => {
-      gameRef.current?.destroy(true);
-      gameRef.current = null;
-    };
-  }, []);
-
   // Key entry screen — shown when no key is configured
   if (!key) {
     return (
@@ -227,8 +213,7 @@ function App() {
         background: '#1a1a2e',
       }}
     >
-      {/* Phaser canvas container */}
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <GameViewport />
 
       {/* Connecting overlay */}
       {connecting && (
@@ -284,9 +269,17 @@ function App() {
       {/* Vote buttons — shown when a Sprite is selected (Human_Viewer only) */}
       {role === 'Human_Viewer' && <VoteButtons />}
       {/* Heartbeat overview panel + flash alerts (Admin only) */}
-      {role === 'Admin' && <HeartbeatOverview />}
+      {role === 'Admin' && (
+        <Suspense fallback={null}>
+          <HeartbeatOverview />
+        </Suspense>
+      )}
       {/* Admin panel (Admin only) */}
-      {role === 'Admin' && <AdminPanel />}
+      {role === 'Admin' && (
+        <Suspense fallback={null}>
+          <AdminPanel />
+        </Suspense>
+      )}
       {/* Barrage input (Human_Viewer only) */}
       {role === 'Human_Viewer' && <BarrageInput />}
     </div>

@@ -22,10 +22,46 @@ interface ContestantRow {
   status: string;
 }
 
+type HeartbeatRequestBody = {
+  contestant_id?: string;
+  contestantId?: string;
+  timestamp?: string | number;
+  payload?: Partial<HeartbeatPayload> & {
+    cpu_load?: number;
+    memory_usage?: number;
+    response_latency_ms?: number;
+  };
+};
+
 function getContestantFromRequest(req: Request): ContestantRow | null {
   const contestantId = req.contestantId;
   if (!contestantId) return null;
   return db.prepare('SELECT id, name, status FROM contestants WHERE id = ?').get(contestantId) as ContestantRow | null;
+}
+
+function normalizeHeartbeatPayload(body: HeartbeatRequestBody): HeartbeatPayload | null {
+  const payload = body.payload;
+  if (!payload) {
+    return null;
+  }
+
+  const cpuLoad = payload.cpuLoad ?? payload.cpu_load;
+  const memoryUsage = payload.memoryUsage ?? payload.memory_usage;
+  const responseLatency = payload.responseLatency ?? payload.response_latency_ms;
+
+  if (
+    typeof cpuLoad !== 'number' ||
+    typeof memoryUsage !== 'number' ||
+    typeof responseLatency !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    cpuLoad,
+    memoryUsage,
+    responseLatency,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -42,24 +78,20 @@ heartbeatRouter.post('/', requireRole('Admin', 'Agent_Player'), (req: Request, r
     return;
   }
 
-  const { payload } = req.body as {
-    payload?: Partial<HeartbeatPayload>;
-  };
+  const normalizedPayload = normalizeHeartbeatPayload(req.body as HeartbeatRequestBody);
 
-  if (
-    !payload ||
-    typeof payload.cpuLoad !== 'number' ||
-    typeof payload.memoryUsage !== 'number' ||
-    typeof payload.responseLatency !== 'number'
-  ) {
+  if (!normalizedPayload) {
     const body: ErrorResponse = {
-      error: { code: 'SYS_INVALID_PARAMS', message: 'payload 必须包含 cpuLoad, memoryUsage, responseLatency' },
+      error: {
+        code: 'SYS_INVALID_PARAMS',
+        message: 'payload 必须包含 cpuLoad, memoryUsage, responseLatency（兼容旧字段 cpu_load, memory_usage, response_latency_ms）',
+      },
     };
     res.status(400).json(body);
     return;
   }
 
-  heartbeatMonitor.onHeartbeat(contestant.id, payload as HeartbeatPayload);
+  heartbeatMonitor.onHeartbeat(contestant.id, normalizedPayload);
 
   res.status(200).json({
     serverTimestamp: Date.now(),

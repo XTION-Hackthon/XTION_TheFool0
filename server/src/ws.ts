@@ -18,6 +18,7 @@ import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } fro
 // ---------------------------------------------------------------------------
 
 export const connections = new Map<string, WebSocket>();
+export const observerConnections = new Set<WebSocket>();
 
 // Disconnect timers — contestantId → NodeJS.Timeout
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -165,6 +166,32 @@ function rowToContestant(row: ContestantRow): Contestant {
   };
 }
 
+function getHeartbeatSummary(contestantId: string) {
+  const latest = heartbeatMonitor.getHistory(contestantId, 1)[0];
+  return {
+    healthStatus: heartbeatMonitor.getHealthStatus(contestantId),
+    lastTimestamp: latest?.timestamp ?? null,
+    cpuLoad: latest?.payload.cpuLoad ?? null,
+    memoryUsage: latest?.payload.memoryUsage ?? null,
+    responseLatency: latest?.payload.responseLatency ?? null,
+  };
+}
+
+function buildContestantPayload(contestant: Contestant) {
+  return {
+    id: contestant.id,
+    name: contestant.name,
+    position: contestant.position,
+    zone: contestant.currentZoneId,
+    status: contestant.status,
+    energy: contestant.energy,
+    attributes: {
+      ...contestant.attributes,
+      heartbeat: getHeartbeatSummary(contestant.id),
+    },
+  };
+}
+
 function getAllZones(): Zone[] {
   const rows = db.prepare(`
     SELECT id, name, x1, y1, x2, y2, zone_type_id, fill_color, border_color, opacity, icon, access_restriction
@@ -251,6 +278,7 @@ async function handleAuth(
 
   // Agent_Viewer: allow connection and push world.state, but mark as read-only (no contestant registration)
   if (role === 'Agent_Viewer') {
+    observerConnections.add(ws);
     const zones = getAllZones();
     const mapDims = getMapDimensions();
     const onlineContestants = getAllOnlineContestants();
@@ -261,13 +289,7 @@ async function handleAuth(
         height: mapDims.height,
         zones,
       },
-      contestants: onlineContestants.map((c) => ({
-        id: c.id,
-        name: c.name,
-        position: c.position,
-        zone: c.currentZoneId,
-        status: c.status,
-      })),
+      contestants: onlineContestants.map(buildContestantPayload),
     };
 
     sendEvent(ws, {
@@ -302,21 +324,8 @@ async function handleAuth(
       height: mapDims.height,
       zones,
     },
-    contestants: onlineContestants.map((c) => ({
-      id: c.id,
-      name: c.name,
-      position: c.position,
-      zone: c.currentZoneId,
-      status: c.status,
-    })),
-    self: {
-      id: contestant.id,
-      name: contestant.name,
-      position: contestant.position,
-      zone: contestant.currentZoneId,
-      energy: contestant.energy,
-      status: contestant.status,
-    },
+    contestants: onlineContestants.map(buildContestantPayload),
+    self: buildContestantPayload(contestant),
   };
 
   sendEvent(ws, {
@@ -330,11 +339,7 @@ async function handleAuth(
     {
       type: 'contestant.join',
       payload: {
-        id: contestant.id,
-        name: contestant.name,
-        position: contestant.position,
-        zone: contestant.currentZoneId,
-        status: contestant.status,
+        ...buildContestantPayload(contestant),
       },
       timestamp: Date.now(),
     },
@@ -376,6 +381,10 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     });
 
     ws.on('close', () => {
+      if (client.role === 'Agent_Viewer') {
+        observerConnections.delete(ws);
+      }
+
       if (client.contestantId) {
         connections.delete(client.contestantId);
         heartbeatMonitor.unregister(client.contestantId);
@@ -468,11 +477,18 @@ export function sendEvent(ws: WebSocket, event: ServerEvent): void {
   }
 }
 
+export function broadcastToObservers(event: ServerEvent): void {
+  for (const ws of observerConnections) {
+    sendEvent(ws, event);
+  }
+}
+
 export function broadcast(event: ServerEvent, exclude?: string): void {
   for (const [id, ws] of connections) {
     if (exclude && id === exclude) continue;
     sendEvent(ws, event);
   }
+  broadcastToObservers(event);
 }
 
 function sendError(ws: WebSocket, code: string, message: string): void {

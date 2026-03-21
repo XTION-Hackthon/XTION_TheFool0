@@ -6,6 +6,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { interactionManager } from '../modules/interaction-manager';
 import { authMiddleware, requireRole } from '../middleware/auth';
+import { barrageRateLimitMiddleware } from '../modules/rate-limiter';
 
 export const interactionRouter = Router();
 
@@ -21,7 +22,7 @@ function httpError(statusCode: number, code: string, message: string) {
 // Requirements: 10.1
 // ---------------------------------------------------------------------------
 
-interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
+interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), barrageRateLimitMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { viewer_id, viewerId, content } = req.body as { viewer_id?: string; viewerId?: string; content?: string };
     const viewerIdValue = viewer_id ?? viewerId;

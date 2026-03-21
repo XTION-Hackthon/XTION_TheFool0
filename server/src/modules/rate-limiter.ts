@@ -5,7 +5,7 @@
 // =============================================================================
 
 import type { Request, Response, NextFunction } from 'express';
-import type { ErrorResponse } from '../types';
+import type { ErrorResponse, Role } from '../types';
 
 // =============================================================================
 // Constants
@@ -32,6 +32,9 @@ class RateLimiter {
 
   /** Talk 请求时间戳记录：contestantId → 时间戳数组 */
   private talkTimestamps: Map<string, number[]> = new Map();
+
+  /** Barrage 请求时间戳记录：contestantId → 时间戳数组 */
+  private barrageTimestamps: Map<string, number[]> = new Map();
 
   // ---------------------------------------------------------------------------
   // Private helpers
@@ -84,6 +87,13 @@ class RateLimiter {
   }
 
   /**
+   * 基于调用方角色使用自定义全局限制
+   */
+  checkGlobalLimitWithLimit(contestantId: string, limit: number): boolean {
+    return this.checkAndRecord(this.globalTimestamps, contestantId, limit);
+  }
+
+  /**
    * 检查 Broadcast 频率限制
    * @returns true 表示允许，false 表示超限
    * Requirements: 4.5
@@ -119,6 +129,13 @@ class RateLimiter {
   }
 
   /**
+   * 检查 Barrage 频率限制
+   */
+  checkBarrageLimit(contestantId: string, limitPerMinute: number): boolean {
+    return this.checkAndRecord(this.barrageTimestamps, contestantId, limitPerMinute);
+  }
+
+  /**
    * 获取当前全局限制值（用于测试）
    */
   getGlobalLimit(): number {
@@ -139,6 +156,7 @@ class RateLimiter {
     this.globalTimestamps.delete(contestantId);
     this.broadcastTimestamps.delete(contestantId);
     this.talkTimestamps.delete(contestantId);
+    this.barrageTimestamps.delete(contestantId);
   }
 
   /**
@@ -148,6 +166,7 @@ class RateLimiter {
     this.globalTimestamps.clear();
     this.broadcastTimestamps.clear();
     this.talkTimestamps.clear();
+    this.barrageTimestamps.clear();
   }
 }
 
@@ -168,11 +187,12 @@ export const rateLimiter = new RateLimiter();
  * 超限返回 HTTP 429 + API_RATE_LIMITED 错误
  */
 export function rateLimitMiddleware(
-  req: Request & { contestantId?: string },
+  req: Request & { contestantId?: string; role?: Role },
   res: Response,
   next: NextFunction,
 ): void {
   const contestantId = req.contestantId;
+  const role = req.role;
 
   // 若未认证（无 contestantId），跳过速率限制（由认证中间件处理）
   if (!contestantId) {
@@ -180,13 +200,50 @@ export function rateLimitMiddleware(
     return;
   }
 
-  const allowed = rateLimiter.checkGlobalLimit(contestantId);
+  if (role === 'Admin') {
+    next();
+    return;
+  }
+
+  const limit = role === 'Agent_Viewer' ? 120 : rateLimiter.getGlobalLimit();
+
+  const allowed = rateLimiter.checkGlobalLimitWithLimit(contestantId, limit);
 
   if (!allowed) {
     const body: ErrorResponse = {
       error: {
         code: 'API_RATE_LIMITED',
-        message: '请求频率超过限制，请稍后再试（每分钟最多 60 次）',
+        message: `请求频率超过限制，请稍后再试（每分钟最多 ${limit} 次）`,
+      },
+    };
+    res.status(429).json(body);
+    return;
+  }
+
+  next();
+}
+
+/**
+ * Human_Viewer 弹幕发送限流：每分钟最多 10 条
+ */
+export function barrageRateLimitMiddleware(
+  req: Request & { contestantId?: string; role?: Role },
+  res: Response,
+  next: NextFunction,
+): void {
+  const contestantId = req.contestantId;
+
+  if (!contestantId || req.role === 'Admin') {
+    next();
+    return;
+  }
+
+  const allowed = rateLimiter.checkBarrageLimit(contestantId, 10);
+  if (!allowed) {
+    const body: ErrorResponse = {
+      error: {
+        code: 'API_RATE_LIMITED',
+        message: '弹幕发送过于频繁，请稍后再试（每分钟最多 10 条）',
       },
     };
     res.status(429).json(body);

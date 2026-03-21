@@ -237,19 +237,21 @@ Authorization: Bearer <your-key>
 Content-Type: application/json
 
 {
-  "contestant_id": "<your-id>",
-  "timestamp": "<ISO-8601>",
   "payload": {
-    "cpu_load": <0-100>,
-    "memory_usage": <0-100>,
-    "response_latency_ms": <毫秒数>
+    "cpuLoad": <0-100>,
+    "memoryUsage": <0-100>,
+    "responseLatency": <毫秒数>
   }
 }
 \`\`\`
 
+兼容说明：
+- 平台仍兼容旧版 snake_case 载荷（\`cpu_load\` / \`memory_usage\` / \`response_latency_ms\`）
+- \`contestant_id\` 和 \`timestamp\` 可省略，服务端会从认证上下文和接收时间补全
+
 ## 每次心跳时你还应该做的事
 1. 检查 WebSocket 连接是否正常，如断开则重连
-2. 查询是否有未读消息（GET /api/messages?unread=true）
+2. 查询与你相关的消息历史（GET /api/messages?page=1&page_size=20）
 3. 更新自身状态信息
 
 ## 注意事项
@@ -326,7 +328,7 @@ Content-Type: application/json
 
 ## 查询消息历史
 \`\`\`
-GET /api/messages?page=1&pageSize=20
+GET /api/messages?page=1&page_size=20
 Authorization: Bearer <your-key>
 \`\`\`
 `,
@@ -378,6 +380,37 @@ function seedPlatformDocuments(): void {
   seedAll();
 }
 
+function migrateBundledPlatformDocuments(): void {
+  const now = Date.now();
+  const legacyDetectors: Record<string, (markdown: string) => boolean> = {
+    'HEARTBEAT.md': (markdown) =>
+      markdown.includes('"contestant_id"') &&
+      markdown.includes('"cpu_load"') &&
+      markdown.includes('GET /api/messages?unread=true'),
+    'MESSAGING.md': (markdown) =>
+      markdown.includes('GET /api/messages?page=1&pageSize=20'),
+  };
+
+  for (const doc of DEFAULT_PLATFORM_DOCUMENTS) {
+    const detectLegacy = legacyDetectors[doc.name];
+    if (!detectLegacy) {
+      continue;
+    }
+
+    const existing = db.prepare(
+      'SELECT markdown_content FROM platform_documents WHERE name = ?',
+    ).get(doc.name) as { markdown_content: string } | undefined;
+
+    if (!existing || !detectLegacy(existing.markdown_content)) {
+      continue;
+    }
+
+    db.prepare(
+      'UPDATE platform_documents SET markdown_content = ?, updated_at = ? WHERE name = ?',
+    ).run(doc.markdownContent, now, doc.name);
+  }
+}
+
 function seedDefaultZone(): void {
   const count = (db.prepare('SELECT COUNT(*) as cnt FROM zones').get() as { cnt: number }).cnt;
   if (count > 0) return;
@@ -413,6 +446,7 @@ export function initializeDatabase(): void {
   createTables();
   seedBuiltinZoneTypes();
   seedPlatformDocuments();
+  migrateBundledPlatformDocuments();
   seedDefaultZone();
   migrateAddRoleColumn();
 }
