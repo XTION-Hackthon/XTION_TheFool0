@@ -216,9 +216,9 @@ async updateKeyRole(keyId: string, role: Role): Promise<Key>
 
 - `Admin` / `Agent_Player`：完整会话，可发送游戏指令
 - `Agent_Viewer`：只读会话，连接成功并接收 `world.state`，但后续游戏指令消息被拒绝
-- `Human_Viewer`：只读会话，连接成功并接收 `world.state` 与其他实时事件，但后续游戏指令消息被拒绝
+- `Human_Viewer`：拒绝 WebSocket 连接，返回 `AUTH_ROLE_NOT_ALLOWED` 错误
 
-在 `handleMessage()` 中，对已认证的 `Agent_Viewer` 和 `Human_Viewer` 连接，拦截游戏指令类型消息（`move`、`talk`、`broadcast`、`heartbeat`）并返回错误。
+在 `handleMessage()` 中，对已认证的 `Agent_Viewer` 连接，拦截游戏指令类型消息（`move`、`talk`、`broadcast`、`heartbeat`）并返回错误。
 
 ### 6. 前端：`roleStore`
 
@@ -456,7 +456,7 @@ export interface IAuthManager {
 
 1. **角色字段缺失**：若数据库中 Key 的 `role` 为 `NULL`（迁移前的历史数据），`authMiddleware` 应将其视为 `Agent_Player`，同时触发后台补全写入。
 2. **无效角色值**：`generateKey` 和 `updateKeyRole` 在写入数据库前验证 role 值，不在枚举范围内的值返回 400。
-3. **WebSocket 只读限制**：`Human_Viewer` 与 `Agent_Viewer` 均可建立只读 WebSocket 连接，但发送 `move`、`talk`、`broadcast`、`heartbeat` 等游戏指令时返回 `FORBIDDEN_ROLE`。
+3. **WebSocket 角色拒绝**：`Human_Viewer` 尝试建立 WebSocket 连接时，发送 `error` 事件后关闭连接（code: `AUTH_ROLE_NOT_ALLOWED`）。
 4. **前端 403 处理**：`api-client.ts` 捕获 403 响应，通过 `uiStore.addNotification()` 显示"权限不足"提示，不抛出未处理异常。
 
 ---
@@ -514,7 +514,7 @@ it('requireRole 对不在允许列表中的角色返回 403', () => {
 - 生成 Key 时不提供 role → 400 `MISSING_ROLE_FIELD`
 - 生成 Key 时提供无效 role → 400 `INVALID_ROLE`
 - 吊销最后一个 Admin Key → 403 `LAST_ADMIN_KEY`
-- `Human_Viewer` 进入 WebSocket → 收到 `world.state`，但发送游戏指令返回 `FORBIDDEN_ROLE`
+- `Human_Viewer` 尝试 WebSocket 连接 → 连接被关闭
 - `Agent_Viewer` 发送 `move` 指令 → 返回错误事件
 - `GET /api/auth/me` 返回正确的 role、keyId、contestantId
 - 历史 Key 迁移后 role 为 `Agent_Player`

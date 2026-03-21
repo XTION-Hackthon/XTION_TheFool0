@@ -10,11 +10,13 @@ import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
 import { useGameStore } from './stores/gameStore';
 import { wsClient } from './services/ws-client';
+import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
 import { useUiStore } from './stores/uiStore';
 import { GameViewport } from './GameViewport';
+import type { Contestant, GameMap, Zone } from '../../server/src/types/index';
 
 const HeartbeatOverview = lazy(() => import('./components/HeartbeatOverview'));
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
@@ -45,6 +47,40 @@ function getStoredKey(): string {
   return localStorage.getItem('openclaw_key') ?? '';
 }
 
+type WorldOverviewResponse = {
+  map: {
+    width: number;
+    height: number;
+    backgroundImage?: string;
+  };
+  zones: Zone[];
+};
+
+type ContestantListItem = {
+  id: string;
+  name: string;
+  status: Contestant['status'];
+  position: Contestant['position'];
+  currentZoneId: string | null;
+  energy?: number;
+  installedSkills?: string[];
+  attributes?: Record<string, unknown>;
+};
+
+function normalizeViewerContestant(raw: ContestantListItem): Contestant {
+  return {
+    id: raw.id,
+    keyId: '',
+    name: raw.name,
+    status: raw.status,
+    position: raw.position,
+    currentZoneId: raw.currentZoneId,
+    energy: raw.energy ?? 100,
+    installedSkills: raw.installedSkills ?? [],
+    attributes: raw.attributes ?? {},
+  };
+}
+
 function App() {
   const [key, setKey] = useState<string>(getStoredKey);
   const [inputKey, setInputKey] = useState('');
@@ -53,14 +89,17 @@ function App() {
   const fetchRole = useRoleStore((s) => s.fetchRole);
   const resetRole = useRoleStore((s) => s.reset);
   const resetWorld = useGameStore((s) => s.reset);
+  const initWorldState = useGameStore((s) => s.initWorldState);
+  const setConnected = useGameStore((s) => s.setConnected);
   const notifications = useUiStore((s) => s.notifications);
   const dismissNotification = useUiStore((s) => s.dismissNotification);
 
-  // Resolve role first via /api/auth/me, then connect WebSocket for realtime world updates.
+  // Resolve role first. Human_Viewer stays on HTTP snapshots; other roles use WebSocket.
   useEffect(() => {
     let active = true;
     let unsub = () => {};
     let unsubDisc = () => {};
+    let viewerPoll: ReturnType<typeof setInterval> | null = null;
 
     if (!key) {
       wsClient.disconnect();
@@ -85,6 +124,41 @@ function App() {
           return;
         }
 
+        if (roleInfo.role === 'Human_Viewer') {
+          wsClient.disconnect();
+          setConnected(false);
+
+          const loadViewerSnapshot = async () => {
+            const [world, contestants] = await Promise.all([
+              apiClient.get<WorldOverviewResponse>('/api/world'),
+              apiClient.get<ContestantListItem[]>('/api/contestants'),
+            ]);
+
+            if (!active) return;
+
+            const map: GameMap = {
+              width: world.map.width,
+              height: world.map.height,
+              defaultZoneId: world.zones[0]?.id ?? '',
+              zones: world.zones,
+              ...(world.map.backgroundImage ? { backgroundImage: world.map.backgroundImage } : {}),
+            };
+
+            initWorldState({
+              map,
+              zones: world.zones,
+              contestants: contestants.map(normalizeViewerContestant),
+            });
+            setConnecting(false);
+          };
+
+          await loadViewerSnapshot();
+          viewerPoll = setInterval(() => {
+            void loadViewerSnapshot();
+          }, 5000);
+          return;
+        }
+
         const wsUrl = getWsUrl();
         unsub = wsClient.onConnect(() => {
           setConnecting(false);
@@ -103,9 +177,12 @@ function App() {
       active = false;
       unsub();
       unsubDisc();
+      if (viewerPoll) {
+        clearInterval(viewerPoll);
+      }
       wsClient.disconnect();
     };
-  }, [key, fetchRole, resetRole, resetWorld]);
+  }, [key, fetchRole, initWorldState, resetRole, resetWorld, setConnected]);
 
   // Key entry screen — shown when no key is configured
   if (!key) {

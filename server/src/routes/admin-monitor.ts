@@ -16,6 +16,10 @@ export const adminMonitorRouter = Router();
 
 adminMonitorRouter.get('/monitor', (_req: Request, res: Response, next: NextFunction) => {
   try {
+    const onlineCount = (db.prepare(
+      "SELECT COUNT(*) as cnt FROM contestants WHERE status = 'online'",
+    ).get() as { cnt: number }).cnt;
+
     // Zone population distribution
     const zonePopulationRows = db.prepare(`
       SELECT z.id as zone_id, z.name as zone_name, COUNT(c.id) as count
@@ -48,9 +52,11 @@ adminMonitorRouter.get('/monitor', (_req: Request, res: Response, next: NextFunc
     ).get(since) as { cnt: number }).cnt;
 
     res.json({
+      onlineCount,
       zonePopulation,
       recentApiCallsPerMinute: recentApiCalls,
       heartbeatAnomalies,
+      timestamp: Date.now(),
     });
   } catch (err) {
     next(err);

@@ -273,6 +273,12 @@ async function handleAuth(
   // Store role in connection context
   client.role = role;
 
+  if (role === 'Human_Viewer') {
+    sendError(ws, 'AUTH_ROLE_NOT_ALLOWED', '人类观众角色不允许建立 WebSocket 连接');
+    ws.close(1008, 'AUTH_ROLE_NOT_ALLOWED');
+    return;
+  }
+
   // Get default zone and compute initial position
   const defaultZone = getDefaultZone();
   if (!defaultZone) {
@@ -287,8 +293,8 @@ async function handleAuth(
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
   const contestantName = name ?? keyRow?.contestant_name ?? 'Unknown';
 
-  // Viewer roles: allow read-only connection and push world.state.
-  if (role === 'Agent_Viewer' || role === 'Human_Viewer') {
+  // Agent_Viewer: allow read-only connection and push world.state.
+  if (role === 'Agent_Viewer') {
     observerConnections.add(ws);
     const zones = getAllZones();
     const onlineContestants = getAllOnlineContestants();
@@ -382,7 +388,7 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     });
 
     ws.on('close', () => {
-      if (client.role === 'Agent_Viewer' || client.role === 'Human_Viewer') {
+      if (client.role === 'Agent_Viewer') {
         observerConnections.delete(ws);
       }
 
@@ -427,9 +433,9 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 // Message routing
 // ---------------------------------------------------------------------------
 
-// Read-only roles are not allowed to send gameplay command messages.
+// Agent_Viewer is not allowed to send gameplay command messages.
 const GAME_COMMAND_TYPES = new Set(['move', 'talk', 'broadcast', 'heartbeat']);
-const READ_ONLY_ROLES = new Set<Role>(['Agent_Viewer', 'Human_Viewer']);
+const READ_ONLY_ROLES = new Set<Role>(['Agent_Viewer']);
 
 export function handleMessage(
   client: ClientContext,

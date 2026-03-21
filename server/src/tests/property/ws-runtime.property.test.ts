@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe('WebSocket runtime regressions', () => {
-  it('allows Human_Viewer read-only auth and sends world.state', async () => {
+  it('rejects Human_Viewer auth attempts and closes the socket', async () => {
     vi.spyOn(authManager, 'validateKey').mockResolvedValue({
       valid: true,
       contestantId: 'viewer-contestant',
@@ -43,18 +43,19 @@ describe('WebSocket runtime regressions', () => {
 
     expect(client.role).toBe('Human_Viewer');
     expect(registerSpy).not.toHaveBeenCalled();
-    expect(ws.close).not.toHaveBeenCalled();
+    expect(ws.close).toHaveBeenCalledWith(1008, 'AUTH_ROLE_NOT_ALLOWED');
 
     const events = sentRaw.map((raw) => JSON.parse(raw) as { type: string });
-    expect(events.some((event) => event.type === 'world.state')).toBe(true);
+    expect(events.some((event) => event.type === 'error')).toBe(true);
+    expect(events.some((event) => event.type === 'world.state')).toBe(false);
   });
 
-  it('rejects Human_Viewer gameplay commands with FORBIDDEN_ROLE', () => {
+  it('rejects Agent_Viewer gameplay commands with FORBIDDEN_ROLE', () => {
     const { ws, sentRaw } = makeMockWs();
     const client: ClientContext = {
       ws: ws as unknown as ClientContext['ws'],
       contestantId: null,
-      role: 'Human_Viewer',
+      role: 'Agent_Viewer',
     };
 
     handleMessage(client, { type: 'move', payload: { x: 1, y: 2 } }, () => {
