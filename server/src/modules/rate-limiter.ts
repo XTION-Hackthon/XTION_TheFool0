@@ -191,6 +191,11 @@ export function rateLimitMiddleware(
   res: Response,
   next: NextFunction,
 ): void {
+  if (req.path === '/auth/me' || req.path === '/api/auth/me') {
+    next();
+    return;
+  }
+
   const contestantId = req.contestantId;
   const role = req.role;
 

@@ -159,6 +159,10 @@ export function initStores(): void {
       timestamp: p.timestamp,
     };
     useMessageStore.getState().addTalkMessage(msg);
+    // Prefer showing talk near the sender sprite in-world.
+    if (msg.senderId && msg.content) {
+      useGameStore.getState().setSpeechBubble(msg.senderId, msg.content, 4000);
+    }
   });
 
   // ── broadcast.message ────────────────────────────────────────────────────────

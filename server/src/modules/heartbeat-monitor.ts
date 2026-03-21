@@ -77,6 +77,10 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
   }
 
   onHeartbeat(contestantId: string, payload: HeartbeatPayload): void {
+    if (!this.contestants.has(contestantId)) {
+      // Keep heartbeat ingestion resilient when runtime state was evicted.
+      this.register(contestantId);
+    }
     const state = this.contestants.get(contestantId);
     if (!state) return;
 
@@ -117,12 +121,31 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
   }
 
   getHistory(contestantId: string, limit = 100): HeartbeatRecord[] {
-    const state = this.contestants.get(contestantId);
-    if (!state) return [];
+    const cap = Math.min(Math.max(limit, 1), MAX_HISTORY);
+    const rows = db.prepare(`
+      SELECT contestant_id, timestamp, cpu_load, memory_usage, response_latency
+      FROM heartbeat_records
+      WHERE contestant_id = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `).all(contestantId, cap) as Array<{
+      contestant_id: string;
+      timestamp: number;
+      cpu_load: number;
+      memory_usage: number;
+      response_latency: number;
+    }>;
 
-    const cap = Math.min(limit, MAX_HISTORY);
-    const history = state.history;
-    return history.slice(Math.max(0, history.length - cap));
+    // Return chronological order (oldest -> newest) for compatibility.
+    return rows.reverse().map((row) => ({
+      contestantId: row.contestant_id,
+      timestamp: row.timestamp,
+      payload: {
+        cpuLoad: row.cpu_load,
+        memoryUsage: row.memory_usage,
+        responseLatency: row.response_latency,
+      },
+    }));
   }
 
   updateConfig(config: HeartbeatConfig): void {

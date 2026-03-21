@@ -167,6 +167,11 @@ export class SkillDocManagerClass implements ISkillDocManager {
     this.db.prepare('DELETE FROM skill_documents WHERE id = ?').run(docId);
   }
 
+  async listSkillDocuments(): Promise<SkillDocument[]> {
+    const rows = this.db.prepare('SELECT * FROM skill_documents ORDER BY updated_at DESC').all() as SkillDocRow[];
+    return rows.map(rowToDoc);
+  }
+
   async listDocuments(): Promise<SkillMetadata[]> {
     const rows = this.db.prepare('SELECT * FROM skill_documents ORDER BY updated_at DESC').all() as SkillDocRow[];
     return rows.map((r) => ({

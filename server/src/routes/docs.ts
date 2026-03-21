@@ -17,6 +17,17 @@ function httpError(statusCode: number, code: string, message: string) {
   return err;
 }
 
+function extractMarkdownContent(body: unknown): string | null {
+  const payload = body as { content?: unknown; markdownContent?: unknown };
+  if (typeof payload.content === 'string' && payload.content.trim() !== '') {
+    return payload.content;
+  }
+  if (typeof payload.markdownContent === 'string' && payload.markdownContent.trim() !== '') {
+    return payload.markdownContent;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/docs/:doc_name — 获取平台文档
 // Requirements: 12.4, 12.6
@@ -42,9 +53,9 @@ export const adminDocsRouter = Router();
 
 adminDocsRouter.put('/:doc_name', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { content } = req.body as { content?: string };
-    if (!content || typeof content !== 'string') {
-      return next(httpError(400, 'INVALID_PARAM', '参数 content 不能为空'));
+    const content = extractMarkdownContent(req.body);
+    if (!content) {
+      return next(httpError(400, 'INVALID_PARAM', '参数 content 或 markdownContent 不能为空'));
     }
 
     const docName = req.params['doc_name'] as string;

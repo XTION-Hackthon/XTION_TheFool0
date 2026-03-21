@@ -10,7 +10,6 @@ import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
 import { useGameStore } from './stores/gameStore';
 import { wsClient } from './services/ws-client';
-import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
@@ -53,12 +52,11 @@ function App() {
   const role = useRoleStore((s) => s.role);
   const fetchRole = useRoleStore((s) => s.fetchRole);
   const resetRole = useRoleStore((s) => s.reset);
-  const initWorldState = useGameStore((s) => s.initWorldState);
   const resetWorld = useGameStore((s) => s.reset);
   const notifications = useUiStore((s) => s.notifications);
   const dismissNotification = useUiStore((s) => s.dismissNotification);
 
-  // Resolve role first, then only open WebSocket for roles that are allowed to use it.
+  // Resolve role first via /api/auth/me, then connect WebSocket for realtime world updates.
   useEffect(() => {
     let active = true;
     let unsub = () => {};
@@ -87,34 +85,6 @@ function App() {
           return;
         }
 
-        if (roleInfo.role === 'Human_Viewer') {
-          const [world, contestants] = await Promise.all([
-            apiClient.get<{ map: { width: number; height: number }; zones: Array<{ id: string; name: string; bounds: { x1: number; y1: number; x2: number; y2: number }; zoneTypeId: string; style: { fillColor: string; borderColor: string; opacity: number; icon?: string } }> }>('/api/world'),
-            apiClient.get<Array<{ id: string; name: string; status: 'online' | 'offline' | 'busy' | 'timeout'; position: { x: number; y: number }; currentZoneId: string | null }>>('/api/contestants'),
-          ]);
-          if (!active) return;
-
-          initWorldState({
-            map: {
-              width: world.map.width,
-              height: world.map.height,
-              defaultZoneId: world.zones[0]?.id ?? '',
-              zones: world.zones,
-            },
-            zones: world.zones,
-            contestants: contestants.map((contestant) => ({
-              ...contestant,
-              keyId: '',
-              energy: 100,
-              installedSkills: [],
-              attributes: {},
-            })),
-          });
-          wsClient.disconnect();
-          setConnecting(false);
-          return;
-        }
-
         const wsUrl = getWsUrl();
         unsub = wsClient.onConnect(() => {
           setConnecting(false);
@@ -135,7 +105,7 @@ function App() {
       unsubDisc();
       wsClient.disconnect();
     };
-  }, [key, fetchRole, resetRole, initWorldState, resetWorld]);
+  }, [key, fetchRole, resetRole, resetWorld]);
 
   // Key entry screen — shown when no key is configured
   if (!key) {

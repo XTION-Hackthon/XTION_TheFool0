@@ -112,6 +112,12 @@ function createTables(): void {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS admin_map_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      background_image TEXT,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS talk_messages (
       id TEXT PRIMARY KEY,
       sender_id TEXT NOT NULL,

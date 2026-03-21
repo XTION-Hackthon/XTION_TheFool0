@@ -137,17 +137,16 @@
 - [x] 10. WebSocket 角色验证
   - [x] 10.1 修改 `server/src/ws.ts` 中的 `handleAuth()` 函数
     - `validateKey()` 返回 `role` 后，将 `role` 存入连接上下文（`client.role`）
-    - 若 `role === 'Human_Viewer'`，发送 `{ type: 'error', code: 'AUTH_ROLE_NOT_ALLOWED' }` 后关闭连接
-    - 若 `role === 'Agent_Viewer'`，允许连接并推送 `world.state`，但标记为只读会话
+    - 若 `role === 'Human_Viewer'` 或 `role === 'Agent_Viewer'`，允许连接并推送 `world.state`，但标记为只读会话
     - _需求：5.2_
 
   - [x] 10.2 修改 `server/src/ws.ts` 中的 `handleMessage()` 函数
-    - 对 `client.role === 'Agent_Viewer'` 的连接，拦截游戏指令类型消息（`move`、`talk`、`broadcast`、`heartbeat`）
+    - 对 `client.role === 'Agent_Viewer'` 或 `client.role === 'Human_Viewer'` 的连接，拦截游戏指令类型消息（`move`、`talk`、`broadcast`、`heartbeat`）
     - 返回错误事件，不执行对应游戏逻辑
     - _需求：5.2_
 
   - [x] 10.3 在 `server/src/tests/property/rbac.property.test.ts` 中编写 WebSocket 角色验证属性测试
-    - **Property 7：Agent_Viewer WebSocket 游戏指令拒绝** — 任意游戏指令类型消息均被拒绝
+    - **Property 7：只读 Viewer WebSocket 游戏指令拒绝** — 任意游戏指令类型消息均被拒绝
     - **Validates: Requirements 5.2**
 
 - [x] 11. 检查点 — 确保所有测试通过

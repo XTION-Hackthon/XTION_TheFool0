@@ -6,7 +6,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { interactionManager } from '../modules/interaction-manager';
 import { authMiddleware, requireRole } from '../middleware/auth';
-import { barrageRateLimitMiddleware } from '../modules/rate-limiter';
+import { barrageRateLimitMiddleware, rateLimitMiddleware } from '../modules/rate-limiter';
 
 export const interactionRouter = Router();
 
@@ -22,7 +22,7 @@ function httpError(statusCode: number, code: string, message: string) {
 // Requirements: 10.1
 // ---------------------------------------------------------------------------
 
-interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), barrageRateLimitMiddleware, async (req: Request, res: Response, next: NextFunction) => {
+interactionRouter.post('/barrage', authMiddleware, rateLimitMiddleware, requireRole('Admin', 'Human_Viewer'), barrageRateLimitMiddleware, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { viewer_id, viewerId, content } = req.body as { viewer_id?: string; viewerId?: string; content?: string };
     const viewerIdValue = viewer_id ?? viewerId;
@@ -41,7 +41,7 @@ interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_V
 // Requirements: 10.3
 // ---------------------------------------------------------------------------
 
-interactionRouter.post('/contestants/:id/vote', authMiddleware, requireRole('Admin', 'Human_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
+interactionRouter.post('/contestants/:id/vote', authMiddleware, rateLimitMiddleware, requireRole('Admin', 'Human_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { viewer_id, viewerId, type } = req.body as { viewer_id?: string; viewerId?: string; type?: string };
     const viewerIdValue = viewer_id ?? viewerId;
@@ -74,7 +74,7 @@ interactionRouter.get('/contestants/:id/votes', async (req: Request, res: Respon
 // Requirements: 10.5
 // ---------------------------------------------------------------------------
 
-interactionRouter.get('/audience-feedback', authMiddleware, requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
+interactionRouter.get('/audience-feedback', authMiddleware, rateLimitMiddleware, requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const contestantId = req.query['contestant_id'] as string | undefined;
     const feedback = await interactionManager.getAudienceFeedback(contestantId);

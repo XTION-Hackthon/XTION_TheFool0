@@ -9,6 +9,7 @@ import type * as http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db';
 import { authManager } from './modules/auth-manager';
+import { adminMapConfigStore } from './modules/admin-map-config';
 import { docDistributor } from './modules/doc-distributor';
 import { heartbeatMonitor } from './modules/heartbeat-monitor';
 import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } from './types/index';
@@ -93,20 +94,25 @@ function upsertContestant(keyId: string, name: string, position: Position, zoneI
   `).get(keyId) as ContestantRow | undefined;
 
   if (existing) {
-    // Update existing contestant to online
+    const reconnectZoneId = existing.current_zone_id ?? zoneId;
+    const reconnectPosition: Position = existing.current_zone_id
+      ? { x: existing.position_x, y: existing.position_y }
+      : position;
+
+    // Reconnect: keep prior location and only restore online state.
     db.prepare(`
       UPDATE contestants
       SET status = 'online', position_x = ?, position_y = ?, current_zone_id = ?, connected_at = ?, disconnected_at = NULL
       WHERE key_id = ?
-    `).run(position.x, position.y, zoneId, now, keyId);
+    `).run(reconnectPosition.x, reconnectPosition.y, reconnectZoneId, now, keyId);
 
     return {
       id: existing.id,
       keyId,
       name: existing.name,
       status: 'online',
-      position,
-      currentZoneId: zoneId,
+      position: reconnectPosition,
+      currentZoneId: reconnectZoneId,
       energy: existing.energy,
       installedSkills: JSON.parse(existing.installed_skills) as string[],
       attributes: JSON.parse(existing.attributes) as Record<string, unknown>,
@@ -229,6 +235,18 @@ function getMapDimensions(): { width: number; height: number } {
   };
 }
 
+function buildWorldMapPayload(zones: Zone[]) {
+  const mapDims = getMapDimensions();
+  const mapConfig = adminMapConfigStore.getConfig();
+
+  return {
+    width: mapDims.width,
+    height: mapDims.height,
+    zones,
+    ...(mapConfig.backgroundImage ? { backgroundImage: mapConfig.backgroundImage } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Auth handler
 // ---------------------------------------------------------------------------
@@ -255,13 +273,6 @@ async function handleAuth(
   // Store role in connection context
   client.role = role;
 
-  // Human_Viewer is not allowed to connect via WebSocket
-  if (role === 'Human_Viewer') {
-    sendError(ws, 'AUTH_ROLE_NOT_ALLOWED', '人类观众角色不允许建立 WebSocket 连接');
-    ws.close(1008, 'AUTH_ROLE_NOT_ALLOWED');
-    return;
-  }
-
   // Get default zone and compute initial position
   const defaultZone = getDefaultZone();
   if (!defaultZone) {
@@ -276,19 +287,14 @@ async function handleAuth(
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
   const contestantName = name ?? keyRow?.contestant_name ?? 'Unknown';
 
-  // Agent_Viewer: allow connection and push world.state, but mark as read-only (no contestant registration)
-  if (role === 'Agent_Viewer') {
+  // Viewer roles: allow read-only connection and push world.state.
+  if (role === 'Agent_Viewer' || role === 'Human_Viewer') {
     observerConnections.add(ws);
     const zones = getAllZones();
-    const mapDims = getMapDimensions();
     const onlineContestants = getAllOnlineContestants();
 
     const worldStatePayload = {
-      map: {
-        width: mapDims.width,
-        height: mapDims.height,
-        zones,
-      },
+      map: buildWorldMapPayload(zones),
       contestants: onlineContestants.map(buildContestantPayload),
     };
 
@@ -315,15 +321,10 @@ async function handleAuth(
 
   // Build world.state payload
   const zones = getAllZones();
-  const mapDims = getMapDimensions();
   const onlineContestants = getAllOnlineContestants();
 
   const worldStatePayload = {
-    map: {
-      width: mapDims.width,
-      height: mapDims.height,
-      zones,
-    },
+    map: buildWorldMapPayload(zones),
     contestants: onlineContestants.map(buildContestantPayload),
     self: buildContestantPayload(contestant),
   };
@@ -381,7 +382,7 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     });
 
     ws.on('close', () => {
-      if (client.role === 'Agent_Viewer') {
+      if (client.role === 'Agent_Viewer' || client.role === 'Human_Viewer') {
         observerConnections.delete(ws);
       }
 
@@ -426,8 +427,9 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 // Message routing
 // ---------------------------------------------------------------------------
 
-// Game command types that Agent_Viewer is not allowed to send
+// Read-only roles are not allowed to send gameplay command messages.
 const GAME_COMMAND_TYPES = new Set(['move', 'talk', 'broadcast', 'heartbeat']);
+const READ_ONLY_ROLES = new Set<Role>(['Agent_Viewer', 'Human_Viewer']);
 
 export function handleMessage(
   client: ClientContext,
@@ -436,9 +438,8 @@ export function handleMessage(
 ): void {
   const ws = client.ws;
 
-  // Agent_Viewer: intercept game command messages and return error
-  if (client.role === 'Agent_Viewer' && GAME_COMMAND_TYPES.has(msg.type)) {
-    sendError(ws, 'FORBIDDEN_ROLE', '观察者角色不能发送游戏指令');
+  if (client.role && READ_ONLY_ROLES.has(client.role) && GAME_COMMAND_TYPES.has(msg.type)) {
+    sendError(ws, 'FORBIDDEN_ROLE', '只读角色不能发送游戏指令');
     return;
   }
 

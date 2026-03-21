@@ -6,6 +6,9 @@ import { interactionManager } from '../../modules/interaction-manager';
 import { eventLogger } from '../../modules/event-logger';
 import { heartbeatMonitor } from '../../modules/heartbeat-monitor';
 import { rateLimiter } from '../../modules/rate-limiter';
+import { skillDocManager } from '../../modules/skill-doc-manager';
+import { docDistributor } from '../../modules/doc-distributor';
+import { adminMapConfigStore } from '../../modules/admin-map-config';
 import { db } from '../../db';
 
 describe('Route contract regressions', () => {
@@ -167,5 +170,134 @@ describe('Route contract regressions', () => {
     expect(blocked.status).toBe(429);
     expect(blocked.body.error.code).toBe('API_RATE_LIMITED');
     expect(sendBarrageSpy).toHaveBeenCalledTimes(10);
+  });
+
+  it('returns SkillDocument[] on GET /api/admin/skills', async () => {
+    vi.spyOn(authManager, 'validateKey').mockResolvedValue({
+      valid: true,
+      contestantId: 'admin-contestant',
+      keyId: 'admin-key-id',
+      role: 'Admin',
+    });
+
+    const docs = [{
+      id: 'skill-1',
+      metadata: { name: 'Skill A', version: '1.0.0', description: 'desc', tags: [] },
+      markdownContent: '# Skill A',
+      currentVersion: '1.0.0',
+      isDefault: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }];
+    vi.spyOn(skillDocManager, 'listSkillDocuments').mockResolvedValue(docs);
+
+    const res = await request(app)
+      .get('/api/admin/skills')
+      .set('Authorization', 'Bearer admin-key');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(docs);
+  });
+
+  it('accepts markdownContent on POST /api/admin/skills for transition compatibility', async () => {
+    vi.spyOn(authManager, 'validateKey').mockResolvedValue({
+      valid: true,
+      contestantId: 'admin-contestant',
+      keyId: 'admin-key-id',
+      role: 'Admin',
+    });
+
+    vi.spyOn(skillDocManager, 'validateMetadata').mockReturnValue({ valid: true, errors: [] });
+    vi.spyOn(skillDocManager, 'uploadDocument').mockResolvedValue({
+      id: 'skill-1',
+      metadata: { name: 'Skill A', version: '1.0.0', description: 'desc', tags: [] },
+      markdownContent: '---\nname: Skill A\nversion: 1.0.0\ndescription: desc\n---\nbody',
+      currentVersion: '1.0.0',
+      isDefault: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    const res = await request(app)
+      .post('/api/admin/skills')
+      .set('Authorization', 'Bearer admin-key')
+      .send({ markdownContent: '---\nname: Skill A\nversion: 1.0.0\ndescription: desc\n---\nbody' });
+
+    expect(res.status).toBe(201);
+    expect(skillDocManager.uploadDocument).toHaveBeenCalledWith(expect.stringContaining('name: Skill A'));
+  });
+
+  it('accepts markdownContent on PUT /api/admin/docs/:doc_name', async () => {
+    vi.spyOn(authManager, 'validateKey').mockResolvedValue({
+      valid: true,
+      contestantId: 'admin-contestant',
+      keyId: 'admin-key-id',
+      role: 'Admin',
+    });
+
+    const realPrepare = db.prepare.bind(db);
+    vi.spyOn(db, 'prepare').mockImplementation(((sql: string) => {
+      if (sql.includes('SELECT id FROM platform_documents WHERE name = ?')) {
+        return {
+          get: () => ({ id: 'doc-heartbeat' }),
+        } as ReturnType<typeof realPrepare>;
+      }
+      if (sql.includes('UPDATE platform_documents SET markdown_content = ?, updated_at = ? WHERE name = ?')) {
+        return {
+          run: () => ({ changes: 1 }),
+        } as ReturnType<typeof realPrepare>;
+      }
+      return realPrepare(sql);
+    }) as typeof db.prepare);
+
+    vi.spyOn(docDistributor, 'notifyDocumentUpdate').mockResolvedValue();
+    vi.spyOn(docDistributor, 'getPlatformDocument').mockResolvedValue({
+      id: 'doc-heartbeat',
+      name: 'HEARTBEAT.md',
+      markdownContent: '# Updated',
+      isMandatory: true,
+      updatedAt: Date.now(),
+    });
+
+    const res = await request(app)
+      .put('/api/admin/docs/HEARTBEAT.md')
+      .set('Authorization', 'Bearer admin-key')
+      .send({ markdownContent: '# Updated' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.markdownContent).toBe('# Updated');
+    expect(docDistributor.notifyDocumentUpdate).toHaveBeenCalledWith('HEARTBEAT.md');
+  });
+
+  it('supports GET/PUT /api/admin/map for backgroundImage', async () => {
+    vi.spyOn(authManager, 'validateKey').mockResolvedValue({
+      valid: true,
+      contestantId: 'admin-contestant',
+      keyId: 'admin-key-id',
+      role: 'Admin',
+    });
+
+    vi.spyOn(adminMapConfigStore, 'getConfig').mockReturnValue({
+      backgroundImage: 'https://example.com/bg.png',
+      updatedAt: 1,
+    });
+    vi.spyOn(adminMapConfigStore, 'updateBackgroundImage').mockReturnValue({
+      backgroundImage: 'https://example.com/new.png',
+      updatedAt: 2,
+    });
+
+    const getRes = await request(app)
+      .get('/api/admin/map')
+      .set('Authorization', 'Bearer admin-key');
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.backgroundImage).toBe('https://example.com/bg.png');
+
+    const putRes = await request(app)
+      .put('/api/admin/map')
+      .set('Authorization', 'Bearer admin-key')
+      .send({ backgroundImage: 'https://example.com/new.png' });
+    expect(putRes.status).toBe(200);
+    expect(putRes.body.backgroundImage).toBe('https://example.com/new.png');
+    expect(adminMapConfigStore.updateBackgroundImage).toHaveBeenCalledWith('https://example.com/new.png');
   });
 });
