@@ -10,12 +10,15 @@ import Phaser from 'phaser';
 import { createGame } from './game';
 import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
+import { useGameStore } from './stores/gameStore';
 import { wsClient } from './services/ws-client';
+import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
 import { HeartbeatOverview } from './components/HeartbeatOverview';
 import { AdminPanel } from './components/AdminPanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
+import { useUiStore } from './stores/uiStore';
 
 // Initialize stores once (wires WebSocket events → Zustand)
 initStores();
@@ -51,28 +54,90 @@ function App() {
   const [connecting, setConnecting] = useState(false);
   const role = useRoleStore((s) => s.role);
   const fetchRole = useRoleStore((s) => s.fetchRole);
+  const resetRole = useRoleStore((s) => s.reset);
+  const initWorldState = useGameStore((s) => s.initWorldState);
+  const resetWorld = useGameStore((s) => s.reset);
+  const notifications = useUiStore((s) => s.notifications);
+  const dismissNotification = useUiStore((s) => s.dismissNotification);
 
-  // Connect WebSocket when key is available
+  // Resolve role first, then only open WebSocket for roles that are allowed to use it.
   useEffect(() => {
-    if (!key) return;
+    let active = true;
+    let unsub = () => {};
+    let unsubDisc = () => {};
+
+    if (!key) {
+      wsClient.disconnect();
+      resetRole();
+      resetWorld();
+      setConnecting(false);
+      return;
+    }
 
     setConnecting(true);
-    const wsUrl = getWsUrl();
-    wsClient.connect(wsUrl, key);
+    resetWorld();
 
-    const unsub = wsClient.onConnect(() => {
-      setConnecting(false);
-      // Fetch role after successful connection
-      fetchRole();
-    });
-    const unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
+    void (async () => {
+      try {
+        const roleInfo = await fetchRole();
+        if (!active) return;
+
+        if (!roleInfo) {
+          setConnecting(false);
+          wsClient.disconnect();
+          resetWorld();
+          return;
+        }
+
+        if (roleInfo.role === 'Human_Viewer') {
+          const [world, contestants] = await Promise.all([
+            apiClient.get<{ map: { width: number; height: number }; zones: Array<{ id: string; name: string; bounds: { x1: number; y1: number; x2: number; y2: number }; zoneTypeId: string; style: { fillColor: string; borderColor: string; opacity: number; icon?: string } }> }>('/api/world'),
+            apiClient.get<Array<{ id: string; name: string; status: 'online' | 'offline' | 'busy' | 'timeout'; position: { x: number; y: number }; currentZoneId: string | null }>>('/api/contestants'),
+          ]);
+          if (!active) return;
+
+          initWorldState({
+            map: {
+              width: world.map.width,
+              height: world.map.height,
+              defaultZoneId: world.zones[0]?.id ?? '',
+              zones: world.zones,
+            },
+            zones: world.zones,
+            contestants: contestants.map((contestant) => ({
+              ...contestant,
+              keyId: '',
+              energy: 100,
+              installedSkills: [],
+              attributes: {},
+            })),
+          });
+          wsClient.disconnect();
+          setConnecting(false);
+          return;
+        }
+
+        const wsUrl = getWsUrl();
+        unsub = wsClient.onConnect(() => {
+          setConnecting(false);
+        });
+        unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
+        wsClient.connect(wsUrl, key);
+      } catch {
+        if (!active) return;
+        setConnecting(false);
+        wsClient.disconnect();
+        resetWorld();
+      }
+    })();
 
     return () => {
+      active = false;
       unsub();
       unsubDisc();
       wsClient.disconnect();
     };
-  }, [key, fetchRole]);
+  }, [key, fetchRole, resetRole, initWorldState, resetWorld]);
 
   // Mount Phaser game once
   useEffect(() => {
@@ -187,6 +252,30 @@ function App() {
           正在连接服务器…
         </div>
       )}
+
+      {notifications.map((notification, index) => (
+        <div
+          key={notification.id}
+          onClick={() => dismissNotification(notification.id)}
+          style={{
+            position: 'absolute',
+            top: 16 + index * 52,
+            right: 16,
+            minWidth: 180,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: notification.type === 'error' ? 'rgba(180, 32, 32, 0.95)' : 'rgba(30, 30, 60, 0.95)',
+            color: '#fff',
+            fontSize: 13,
+            fontFamily: 'Arial, sans-serif',
+            zIndex: 1100,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+            cursor: 'pointer',
+          }}
+        >
+          {notification.message}
+        </div>
+      ))}
 
       {/* React UI overlay — talk bubbles, broadcast banner, barrage */}
       <UIOverlay />

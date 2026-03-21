@@ -10,6 +10,8 @@
  * Requirements: 8.1, 8.2
  */
 
+import { useUiStore } from '../stores/uiStore';
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -53,6 +55,12 @@ async function handleResponse<T>(res: Response): Promise<T> {
     }
   } catch {
     // ignore parse errors
+  }
+  if (res.status === 403) {
+    useUiStore.getState().addNotification({
+      type: 'error',
+      message: '权限不足',
+    });
   }
   throw new ApiError(res.status, code, message);
 }

@@ -173,7 +173,7 @@ statusRouter.get('/zones', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
 // Requirements: 13.3
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/zones/:id', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/zones/:id', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 'Agent_Viewer'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const zoneId = req.params['id'] as string;
     const row = db.prepare('SELECT * FROM zones WHERE id = ?').get(zoneId) as ZoneRow | undefined;
@@ -236,7 +236,7 @@ statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
 // Requirements: 8.3
 // ---------------------------------------------------------------------------
 
-statusRouter.get('/messages', (req: Request, res: Response, next: NextFunction) => {
+statusRouter.get('/messages', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response, next: NextFunction) => {
   try {
     const page = req.query['page'] ? parseInt(req.query['page'] as string, 10) : 1;
     const pageSize = req.query['page_size'] ? parseInt(req.query['page_size'] as string, 10) : 20;

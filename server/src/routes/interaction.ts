@@ -23,11 +23,12 @@ function httpError(statusCode: number, code: string, message: string) {
 
 interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { viewer_id, content } = req.body as { viewer_id?: string; content?: string };
-    if (!viewer_id || !content) {
+    const { viewer_id, viewerId, content } = req.body as { viewer_id?: string; viewerId?: string; content?: string };
+    const viewerIdValue = viewer_id ?? viewerId;
+    if (!viewerIdValue || !content) {
       return next(httpError(400, 'INVALID_PARAM', '参数 viewer_id 和 content 不能为空'));
     }
-    const msg = await interactionManager.sendBarrage(viewer_id, content);
+    const msg = await interactionManager.sendBarrage(viewerIdValue, content);
     res.status(201).json(msg);
   } catch (err) {
     next(err);
@@ -41,11 +42,12 @@ interactionRouter.post('/barrage', authMiddleware, requireRole('Admin', 'Human_V
 
 interactionRouter.post('/contestants/:id/vote', authMiddleware, requireRole('Admin', 'Human_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { viewer_id, type } = req.body as { viewer_id?: string; type?: string };
-    if (!viewer_id || (type !== 'like' && type !== 'dislike')) {
+    const { viewer_id, viewerId, type } = req.body as { viewer_id?: string; viewerId?: string; type?: string };
+    const viewerIdValue = viewer_id ?? viewerId;
+    if (!viewerIdValue || (type !== 'like' && type !== 'dislike')) {
       return next(httpError(400, 'INVALID_PARAM', '参数 viewer_id 和 type (like/dislike) 不能为空'));
     }
-    await interactionManager.vote(viewer_id, req.params['id'] as string, type);
+    await interactionManager.vote(viewerIdValue, req.params['id'] as string, type);
     res.status(204).end();
   } catch (err) {
     next(err);

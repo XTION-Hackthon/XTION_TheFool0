@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { eventLogger } from '../modules/event-logger';
+import { requireRole } from '../middleware/auth';
 import type { EventType } from '../types';
 
 export const eventsRouter = Router();
@@ -14,7 +15,7 @@ export const eventsRouter = Router();
 // Requirements: 13.5
 // ---------------------------------------------------------------------------
 
-eventsRouter.get('/', async (req: Request, res: Response, next: NextFunction) => {
+eventsRouter.get('/', requireRole('Admin', 'Agent_Viewer'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const type = req.query['type'] as EventType | undefined;
     const contestantId = req.query['contestant_id'] as string | undefined;

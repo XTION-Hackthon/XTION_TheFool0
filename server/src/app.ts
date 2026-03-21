@@ -79,8 +79,8 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/api/admin/keys', authMiddleware, requireRole('Admin'), adminKeysRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminZonesRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMoveRouter);
-app.use('/api/talk', authMiddleware, talkRouter);
-app.use('/api/broadcast', authMiddleware, broadcastRouter);
+app.use('/api/talk', authMiddleware, requireRole('Admin', 'Agent_Player'), talkRouter);
+app.use('/api/broadcast', authMiddleware, requireRole('Admin', 'Agent_Player'), broadcastRouter);
 app.use('/api/move', authMiddleware, moveRouter);
 app.use('/api/heartbeat', authMiddleware, heartbeatRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminHeartbeatRouter);
@@ -88,7 +88,7 @@ app.use('/api/admin/skills', authMiddleware, requireRole('Admin'), adminSkillsRo
 app.use('/api/skills', authMiddleware, skillsRouter);
 app.use('/api/docs', authMiddleware, docsRouter);
 app.use('/api/admin/docs', authMiddleware, requireRole('Admin'), adminDocsRouter);
-app.use('/api', authMiddleware, eventsRouter);
+app.use('/api/events', authMiddleware, eventsRouter);
 app.use('/api', interactionRouter);
 app.use('/api', authMiddleware, statusRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);

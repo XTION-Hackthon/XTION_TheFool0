@@ -15,7 +15,8 @@ interface RoleState {
   keyId: string | null;
   contestantId: string | null;
   loading: boolean;
-  fetchRole: () => Promise<void>;
+  fetchRole: () => Promise<{ role: Role; keyId: string; contestantId: string | null } | null>;
+  reset: () => void;
 }
 
 export const useRoleStore = create<RoleState>((set) => ({
@@ -30,10 +31,13 @@ export const useRoleStore = create<RoleState>((set) => ({
         '/api/auth/me',
       );
       set({ role: data.role, keyId: data.keyId, contestantId: data.contestantId });
+      return data;
     } catch {
-      // ignore — role stays null, UI will show nothing role-specific
+      set({ role: null, keyId: null, contestantId: null });
+      return null;
     } finally {
       set({ loading: false });
     }
   },
+  reset: () => set({ role: null, keyId: null, contestantId: null, loading: false }),
 }));

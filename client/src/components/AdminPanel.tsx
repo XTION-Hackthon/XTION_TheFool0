@@ -47,6 +47,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function KeysTab() {
   const [keys, setKeys] = useState<Key[]>([]);
   const [newName, setNewName] = useState('');
+  const [newRole, setNewRole] = useState<Key['role']>('Agent_Player');
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -62,8 +63,9 @@ function KeysTab() {
     if (!newName.trim()) return;
     setLoading(true);
     try {
-      await apiClient.post('/api/admin/keys', { contestantName: newName });
+      await apiClient.post('/api/admin/keys', { name: newName, role: newRole });
       setNewName('');
+      setNewRole('Agent_Player');
       await load();
     } finally {
       setLoading(false);
@@ -85,6 +87,12 @@ function KeysTab() {
       <SectionTitle>生成新 Key</SectionTitle>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input style={{ ...inputStyle, flex: 1 }} placeholder="选手名称" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <select style={{ ...inputStyle, width: 160 }} value={newRole} onChange={(e) => setNewRole(e.target.value as Key['role'])}>
+          <option value="Admin">Admin</option>
+          <option value="Agent_Player">Agent_Player</option>
+          <option value="Human_Viewer">Human_Viewer</option>
+          <option value="Agent_Viewer">Agent_Viewer</option>
+        </select>
         <button style={btnStyle('primary')} onClick={generate} disabled={loading}>生成</button>
       </div>
       <SectionTitle>Key 列表</SectionTitle>
@@ -94,6 +102,7 @@ function KeysTab() {
             <div>
               <span style={{ color: '#e5e7eb', fontWeight: 600 }}>{k.contestantName}</span>
               <span style={{ color: k.status === 'active' ? '#4ade80' : '#f87171', marginLeft: 8 }}>{k.status}</span>
+              <span style={{ color: '#a78bfa', marginLeft: 8 }}>{k.role}</span>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button style={btnStyle('ghost')} onClick={() => regenerate(k.id)}>重新生成</button>

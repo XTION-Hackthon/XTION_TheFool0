@@ -99,7 +99,7 @@
   - [x] 8.2 在 `server/src/routes/heartbeat.ts` 中为 `POST /api/heartbeat` 添加 `requireRole('Admin', 'Agent_Player')`
     - _需求：2.3, 3.1_
 
-  - [x] 8.3 在 `server/src/routes/interaction.ts` 中为 `POST /api/interaction/barrage` 和 `POST /api/interaction/vote` 添加 `requireRole('Admin', 'Human_Viewer')`
+  - [x] 8.3 在 `server/src/routes/interaction.ts` 中为 `POST /api/barrage` 和 `POST /api/contestants/:id/vote` 添加 `requireRole('Admin', 'Human_Viewer')`
     - _需求：4.1_
 
   - [x] 8.4 在 `server/src/routes/status.ts` 中为 `GET /api/status` 添加 `requireRole('Admin', 'Agent_Player')`

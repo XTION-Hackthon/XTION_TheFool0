@@ -24,33 +24,9 @@ interface ContestantRow {
 }
 
 function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const key = authHeader.slice(7).trim();
-    if (key) {
-      const keyRow = db.prepare(`
-        SELECT id FROM keys WHERE key = ? AND status = 'active'
-      `).get(key) as { id: string } | undefined;
-
-      if (keyRow) {
-        const contestant = db.prepare(`
-          SELECT id, name, status FROM contestants WHERE key_id = ?
-        `).get(keyRow.id) as ContestantRow | undefined;
-        if (contestant) return contestant;
-      }
-    }
-  }
-
-  // Fallback: use senderId from body
-  const { senderId } = req.body as { senderId?: string };
-  if (senderId) {
-    const contestant = db.prepare(`
-      SELECT id, name, status FROM contestants WHERE id = ?
-    `).get(senderId) as ContestantRow | undefined;
-    if (contestant) return contestant;
-  }
-
-  return null;
+  const contestantId = req.contestantId;
+  if (!contestantId) return null;
+  return db.prepare('SELECT id, name, status FROM contestants WHERE id = ?').get(contestantId) as ContestantRow | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,7 +40,7 @@ moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, 
   const contestant = getContestantFromRequest(req);
   if (!contestant) {
     const body: ErrorResponse = {
-      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key 或 senderId' },
+      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key' },
     };
     res.status(401).json(body);
     return;
