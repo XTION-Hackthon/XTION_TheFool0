@@ -244,6 +244,90 @@ export interface PlatformEvent {
 }
 
 // -----------------------------------------------------------------------------
+// Multi-Room Collision System
+// -----------------------------------------------------------------------------
+
+export type RoomType = 'MainHall' | 'PrivateRoom';
+
+export interface Room {
+  id: string;
+  name: string;
+  type: RoomType;
+  capacity: number;
+  bounds?: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Wall {
+  id: string;
+  roomId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  createdAt: string;
+}
+
+export interface SpawnPoint {
+  id: string;
+  roomId: string;
+  x: number;
+  y: number;
+  isAvailable: boolean;
+  createdAt: string;
+}
+
+export interface RoomConfig {
+  id: string;
+  roomId: string;
+  configJson: string;
+  version: number;
+  createdAt: string;
+}
+
+export interface RoomBot {
+  id: string;
+  roomId: string;
+  botId: string;
+  positionX: number | null;
+  positionY: number | null;
+  joinedAt: string;
+}
+
+export interface Doorway {
+  id: string;
+  roomAId: string;
+  roomBId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  createdAt: string;
+}
+
+export interface DoorwayConfig {
+  roomAId: string;
+  roomBId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MembershipChange {
+  botId: string;
+  previousRoomId: string | null;
+  newRoomId: string | null;
+}
+
+// -----------------------------------------------------------------------------
 // Error
 // -----------------------------------------------------------------------------
 

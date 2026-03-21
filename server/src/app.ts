@@ -22,7 +22,12 @@ import { interactionRouter } from './routes/interaction';
 import { statusRouter } from './routes/status';
 import { adminMonitorRouter } from './routes/admin-monitor';
 import { authRouter } from './routes/auth';
+import { roomsRouter } from './routes/rooms';
+import { collisionRouter } from './routes/collision';
+import { mapEditorRouter } from './routes/map-editor';
+import { doorwaysRouter, roomDoorwaysRouter } from './routes/doorways';
 import { authMiddleware, requireRole } from './middleware/auth';
+import pathfindingRouter from './routes/pathfinding';
 
 export const app = express();
 
@@ -93,6 +98,12 @@ app.use('/api', interactionRouter);
 app.use('/api', authMiddleware, statusRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/rooms', authMiddleware, roomsRouter);
+app.use('/api/doorways', authMiddleware, doorwaysRouter);
+app.use('/api/rooms/:id/doorways', authMiddleware, roomDoorwaysRouter);
+app.use('/api/collision', authMiddleware, collisionRouter);
+app.use('/api/map-editor', authMiddleware, requireRole('Admin'), mapEditorRouter);
+app.use('/api/pathfinding', authMiddleware, pathfindingRouter);
 
 // ---------------------------------------------------------------------------
 // Unified error handler — { "error": { "code": "...", "message": "..." } }

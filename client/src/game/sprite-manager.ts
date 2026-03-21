@@ -20,8 +20,10 @@ import type { HealthStatus } from '../../../server/src/types/index';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /** Tween duration range for movement (ms) */
-const TWEEN_MIN_MS = 300;
-const TWEEN_MAX_MS = 1000;
+const TWEEN_MIN_MS = 400;
+const TWEEN_MAX_MS = 1500;
+/** Movement speed: pixels per millisecond */
+const MOVEMENT_SPEED = 0.3;
 
 /** Sprite dimensions */
 const SPRITE_SIZE = 40;
@@ -345,7 +347,7 @@ export class SpriteManager {
 
   /**
    * Tween container to (x, y) with duration proportional to distance.
-   * Duration clamped to [300ms, 1000ms] — Req 6.4.
+   * Duration clamped to [400ms, 1500ms] — Req 6.4.
    */
   private tweenTo(group: SpriteGroup, x: number, y: number): void {
     // Stop any in-progress tween
@@ -355,15 +357,16 @@ export class SpriteManager {
     const dy = y - group.container.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
 
-    // Scale duration: 1px ≈ 1ms, clamped to [300, 1000]
-    const duration = Phaser.Math.Clamp(dist, TWEEN_MIN_MS, TWEEN_MAX_MS);
+    // Calculate duration based on distance and movement speed
+    // Longer distances = longer duration, but clamped to reasonable range
+    const duration = Phaser.Math.Clamp(dist / MOVEMENT_SPEED, TWEEN_MIN_MS, TWEEN_MAX_MS);
 
     group.tween = this.scene.tweens.add({
       targets: group.container,
       x,
       y,
       duration,
-      ease: 'Sine.easeInOut',
+      ease: 'Quad.easeInOut',
       onComplete: () => {
         group.tween = null;
       },

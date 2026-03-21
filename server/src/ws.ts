@@ -11,6 +11,7 @@ import { db } from './db';
 import { authManager } from './modules/auth-manager';
 import { docDistributor } from './modules/doc-distributor';
 import { heartbeatMonitor } from './modules/heartbeat-monitor';
+import { roomManager } from './modules/room-manager';
 import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } from './types/index';
 
 // ---------------------------------------------------------------------------
@@ -355,6 +356,16 @@ async function handleAuth(
 // ---------------------------------------------------------------------------
 
 export function setupWebSocket(server: http.Server): WebSocketServer {
+  // Clean up stale online contestants on server startup
+  // (all connections are lost when server restarts)
+  console.log('[WS] Cleaning up stale online contestants from previous session...');
+  const staleCount = db.prepare(`
+    UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE status = 'online'
+  `).run(Date.now()).changes;
+  if (staleCount > 0) {
+    console.log(`[WS] Marked ${staleCount} stale contestant(s) as offline`);
+  }
+
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
@@ -479,6 +490,204 @@ function sendError(ws: WebSocket, code: string, message: string): void {
   sendEvent(ws, {
     type: 'error',
     payload: { error: { code, message } },
+    timestamp: Date.now(),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Room broadcast helpers
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Batch broadcast infrastructure (task 9.4)
+// High-frequency events (room capacity, bot join/leave) are queued and flushed
+// together after 16ms (one frame) to reduce WebSocket message overhead.
+// ---------------------------------------------------------------------------
+
+const _pendingBroadcasts: Map<string, ServerEvent[]> = new Map();
+let _batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Queue an event for batched delivery. Schedules a flush after 16ms if not already pending. */
+function queueBroadcast(event: ServerEvent): void {
+  const key = (event as { payload?: { roomId?: string } }).payload && typeof (event as { payload?: { roomId?: string } }).payload === 'object'
+    ? ((event as { payload: { roomId?: string } }).payload.roomId ?? '__global__')
+    : '__global__';
+
+  const queue = _pendingBroadcasts.get(key);
+  if (queue) {
+    queue.push(event);
+  } else {
+    _pendingBroadcasts.set(key, [event]);
+  }
+
+  if (_batchTimer === null) {
+    _batchTimer = setTimeout(() => {
+      _batchTimer = null;
+      const allEvents: ServerEvent[] = [];
+      for (const events of _pendingBroadcasts.values()) {
+        allEvents.push(...events);
+      }
+      _pendingBroadcasts.clear();
+
+      if (allEvents.length > 0) {
+        broadcast({
+          type: 'batch.events',
+          payload: { events: allEvents },
+          timestamp: Date.now(),
+        } as unknown as ServerEvent);
+      }
+    }, 16);
+  }
+}
+
+// Delta compression: track last sent room state per roomId
+const _lastRoomState: Map<string, string> = new Map();
+
+/**
+ * Fetch current room state and broadcast to all connected clients.
+ * Uses delta compression — skips broadcast if state hasn't changed.
+ * Requirements: 1, 9
+ */
+export function broadcastRoomState(roomId: string): void {
+  try {
+    const room = roomManager.getRoom(roomId);
+    const bots = roomManager.getRoomBots(roomId);
+    const currentCount = roomManager.getCurrentCount(roomId);
+
+    const payload = {
+      roomId,
+      room,
+      bots,
+      currentCount,
+      capacity: room.capacity,
+    };
+
+    const stateJson = JSON.stringify(payload);
+    const lastJson = _lastRoomState.get(roomId);
+
+    // Skip broadcast if nothing changed
+    if (lastJson === stateJson) return;
+
+    _lastRoomState.set(roomId, stateJson);
+
+    broadcast({
+      type: 'room.state',
+      payload,
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    console.error('[WS] broadcastRoomState error:', err);
+  }
+}
+
+/**
+ * Broadcast room capacity change — batched for efficiency.
+ * Requirements: 2, 9
+ */
+export function broadcastRoomCapacity(roomId: string, currentCount: number, capacity: number): void {
+  queueBroadcast({
+    type: 'room.capacity',
+    payload: { roomId, currentCount, capacity },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Broadcast bot joined event — batched for efficiency.
+ * Requirements: 1, 2, 9
+ */
+export function broadcastBotJoined(
+  roomId: string,
+  botId: string,
+  botName: string,
+  position: { x: number; y: number },
+): void {
+  queueBroadcast({
+    type: 'room.bot_joined',
+    payload: { roomId, botId, botName, position },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Broadcast bot left event — batched for efficiency.
+ * Requirements: 1, 2, 9
+ */
+export function broadcastBotLeft(roomId: string, botId: string): void {
+  queueBroadcast({
+    type: 'room.bot_left',
+    payload: { roomId, botId },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Broadcast collision event immediately (latency-sensitive).
+ * Requirements: 3, 4, 5, 10
+ */
+export function broadcastCollisionEvent(
+  roomId: string,
+  botId: string,
+  collisionType: 'bot' | 'wall',
+  targetId: string | undefined,
+  position: { x: number; y: number },
+): void {
+  broadcast({
+    type: 'collision.event',
+    payload: { roomId, botId, collisionType, targetId, position },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Push spawn point assignment immediately to a specific bot (latency-sensitive).
+ * Requirements: 11
+ */
+export function pushSpawnPointAssignment(
+  botId: string,
+  roomId: string,
+  spawnPoint: { id: string; x: number; y: number },
+): void {
+  const ws = connections.get(botId);
+  if (ws) {
+    sendEvent(ws, {
+      type: 'room.spawn_assigned',
+      payload: { roomId, botId, spawnPoint },
+      timestamp: Date.now(),
+    });
+  }
+}
+
+/**
+ * Broadcast only the changed bot position (incremental sync).
+ * Call this from the move route instead of broadcastRoomState for position updates.
+ * Requirements: 6
+ */
+export function broadcastBotPositionDelta(
+  roomId: string,
+  botId: string,
+  position: { x: number; y: number },
+): void {
+  broadcast({
+    type: 'room.bot_position',
+    payload: { roomId, botId, position },
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Broadcast room membership change when a bot crosses a doorway.
+ * Requirements: 4.5, 4.6
+ */
+export function broadcastMembershipChanged(
+  botId: string,
+  previousRoomId: string | null,
+  newRoomId: string | null,
+  position: { x: number; y: number },
+): void {
+  broadcast({
+    type: 'room.membership_changed',
+    payload: { botId, previousRoomId, newRoomId, position },
     timestamp: Date.now(),
   });
 }

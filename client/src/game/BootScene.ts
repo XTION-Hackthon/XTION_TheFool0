@@ -32,11 +32,27 @@ export class BootScene extends Phaser.Scene {
     // Contestant sprite placeholder
     this.createContestantTexture();
 
-    // Background placeholder (will be replaced by actual image if configured)
-    this.createMapBackgroundTexture();
+    // Try to load map image from /maps folder
+    // If it fails, fallback to generated texture in create()
+    this.load.image('map_bg_image', '/maps/MainHall.png');
+    this.load.on('loaderror', (file: Phaser.Loader.File) => {
+      if (file.key === 'map_bg_image') {
+        console.log('[BootScene] Map image not found, using generated background');
+      }
+    });
   }
 
   create(): void {
+    // If map image loaded successfully, use it; otherwise create fallback texture
+    if (this.textures.exists('map_bg_image')) {
+      // Rename the loaded image to 'map_bg' for GameScene to use
+      const texture = this.textures.get('map_bg_image');
+      this.textures.addImage('map_bg', texture.getSourceImage() as HTMLImageElement);
+    } else {
+      // Create fallback generated texture
+      this.createMapBackgroundTexture();
+    }
+
     this.scene.start('GameScene');
   }
 

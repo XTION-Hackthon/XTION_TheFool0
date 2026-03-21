@@ -18,6 +18,19 @@ db.pragma('foreign_keys = ON');
 // Table Creation
 // =============================================================================
 
+function createIndexes(): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_walls_room_id ON walls(room_id);
+    CREATE INDEX IF NOT EXISTS idx_spawn_points_room_id ON spawn_points(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_configs_room_id ON room_configs(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_bots_room_id ON room_bots(room_id);
+    CREATE INDEX IF NOT EXISTS idx_room_bots_bot_id ON room_bots(bot_id);
+    CREATE INDEX IF NOT EXISTS idx_room_configs_room_version ON room_configs(room_id, version);
+    CREATE INDEX IF NOT EXISTS idx_doorways_room_a_id ON doorways(room_a_id);
+    CREATE INDEX IF NOT EXISTS idx_doorways_room_b_id ON doorways(room_b_id);
+  `);
+}
+
 function createTables(): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS keys (
@@ -158,6 +171,73 @@ function createTables(): void {
       contestant_id TEXT,
       data TEXT NOT NULL DEFAULT '{}',
       timestamp INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS rooms (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      capacity INTEGER NOT NULL,
+      bounds_x1 REAL,
+      bounds_y1 REAL,
+      bounds_x2 REAL,
+      bounds_y2 REAL,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS walls (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      x REAL NOT NULL,
+      y REAL NOT NULL,
+      width REAL NOT NULL,
+      height REAL NOT NULL,
+      rotation REAL DEFAULT 0,
+      created_at TIMESTAMP,
+      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS spawn_points (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      x REAL NOT NULL,
+      y REAL NOT NULL,
+      is_available BOOLEAN DEFAULT 1,
+      created_at TIMESTAMP,
+      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS room_configs (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      created_at TIMESTAMP,
+      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS room_bots (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      position_x REAL,
+      position_y REAL,
+      joined_at TIMESTAMP,
+      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS doorways (
+      id TEXT PRIMARY KEY,
+      room_a_id TEXT NOT NULL,
+      room_b_id TEXT NOT NULL,
+      x REAL NOT NULL,
+      y REAL NOT NULL,
+      width REAL NOT NULL,
+      height REAL NOT NULL,
+      created_at TIMESTAMP,
+      FOREIGN KEY (room_a_id) REFERENCES rooms(id) ON DELETE CASCADE,
+      FOREIGN KEY (room_b_id) REFERENCES rooms(id) ON DELETE CASCADE
     );
   `);
 }
@@ -409,10 +489,45 @@ function migrateAddRoleColumn(): void {
   }
 }
 
+function seedDefaultRoom(): void {
+  const count = (db.prepare('SELECT COUNT(*) as cnt FROM rooms').get() as { cnt: number }).cnt;
+  if (count > 0) return;
+
+  const now = new Date().toISOString();
+  const roomId = 'room-main-hall';
+
+  // Create the default MainHall room
+  db.prepare(`
+    INSERT INTO rooms (id, name, type, capacity, bounds_x1, bounds_y1, bounds_x2, bounds_y2, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(roomId, 'MainHall', 'MainHall', 999999, 0, 0, 1000, 800, now, now);
+
+  // Seed spawn points spread across the MainHall
+  const spawnPoints = [
+    { x: 200, y: 200 },
+    { x: 500, y: 200 },
+    { x: 800, y: 200 },
+    { x: 200, y: 500 },
+    { x: 500, y: 400 },
+    { x: 800, y: 500 },
+  ];
+
+  const insertSpawn = db.prepare(`
+    INSERT INTO spawn_points (id, room_id, x, y, is_available, created_at)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `);
+
+  for (let i = 0; i < spawnPoints.length; i++) {
+    insertSpawn.run(`spawn-main-${i + 1}`, roomId, spawnPoints[i].x, spawnPoints[i].y, now);
+  }
+}
+
 export function initializeDatabase(): void {
   createTables();
+  createIndexes();
   seedBuiltinZoneTypes();
   seedPlatformDocuments();
   seedDefaultZone();
+  seedDefaultRoom();
   migrateAddRoleColumn();
 }

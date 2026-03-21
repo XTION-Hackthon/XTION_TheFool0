@@ -16,6 +16,11 @@ import { AttributePanel } from './components/AttributePanel';
 import { HeartbeatOverview } from './components/HeartbeatOverview';
 import { AdminPanel } from './components/AdminPanel';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
+import { RoomList } from './components/RoomList';
+import { RoomManagementPanel } from './components/RoomManagementPanel';
+import { apiClient } from './services/api-client';
+import { useDoorwayStore } from './stores/doorwayStore';
+import type { Doorway } from './stores/doorwayStore';
 
 // Initialize stores once (wires WebSocket events → Zustand)
 initStores();
@@ -43,12 +48,62 @@ function getStoredKey(): string {
   return localStorage.getItem('openclaw_key') ?? '';
 }
 
+/**
+ * Fetch all doorways from the API and initialize the doorwayStore.
+ * If no rooms exist yet, create a default layout: two rooms connected by a doorway.
+ * Requirement: 7.5
+ */
+async function fetchDoorwaysAndInitLayout(): Promise<void> {
+  try {
+    // Fetch and initialize doorway store
+    const doorways = await apiClient.get<Doorway[]>('/api/doorways');
+    useDoorwayStore.getState().setDoorways(doorways);
+  } catch (err) {
+    console.error('[App] Failed to fetch doorways:', err);
+  }
+
+  try {
+    // Check if any rooms exist; if not, create a default two-room layout with a doorway
+    const rooms = await apiClient.get<Array<{ id: string }>>('/api/rooms');
+    if (rooms.length === 0) {
+      // Create Room A (left)
+      const roomA = await apiClient.post<{ id: string }>('/api/rooms', {
+        name: 'Room A',
+        type: 'MainHall',
+        capacity: 50,
+        bounds: { x1: 0, y1: 0, x2: 800, y2: 600 },
+      });
+      // Create Room B (right, sharing the right wall of Room A)
+      const roomB = await apiClient.post<{ id: string }>('/api/rooms', {
+        name: 'Room B',
+        type: 'PrivateRoom',
+        capacity: 10,
+        bounds: { x1: 800, y1: 0, x2: 1600, y2: 600 },
+      });
+      // Create a doorway on the shared boundary (x=800) between the two rooms
+      const doorway = await apiClient.post<Doorway>('/api/doorways', {
+        roomAId: roomA.id,
+        roomBId: roomB.id,
+        x: 800,
+        y: 250,
+        width: 100,
+        height: 100,
+      });
+      useDoorwayStore.getState().addDoorway(doorway);
+      console.log('[App] Default layout initialized: Room A ↔ Room B via doorway', doorway.id);
+    }
+  } catch (err) {
+    console.error('[App] Failed to initialize default layout:', err);
+  }
+}
+
 function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const [key, setKey] = useState<string>(getStoredKey);
   const [inputKey, setInputKey] = useState('');
   const [connecting, setConnecting] = useState(false);
+  const [connected, setConnected] = useState(false);
   const role = useRoleStore((s) => s.role);
   const fetchRole = useRoleStore((s) => s.fetchRole);
 
@@ -62,10 +117,15 @@ function App() {
 
     const unsub = wsClient.onConnect(() => {
       setConnecting(false);
-      // Fetch role after successful connection
+      setConnected(true);
       fetchRole();
+      // Fetch doorways and initialize default layout after connection
+      fetchDoorwaysAndInitLayout();
     });
-    const unsubDisc = wsClient.onDisconnect(() => setConnecting(false));
+    const unsubDisc = wsClient.onDisconnect(() => {
+      setConnecting(false);
+      setConnected(false);
+    });
 
     return () => {
       unsub();
@@ -74,9 +134,9 @@ function App() {
     };
   }, [key, fetchRole]);
 
-  // Mount Phaser game once
+  // Mount Phaser game only after connected
   useEffect(() => {
-    if (!containerRef.current || gameRef.current) return;
+    if (!connected || !containerRef.current || gameRef.current) return;
 
     gameRef.current = createGame(containerRef.current);
 
@@ -84,7 +144,7 @@ function App() {
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, []);
+  }, [connected]);
 
   // Key entry screen — shown when no key is configured
   if (!key) {
@@ -200,6 +260,39 @@ function App() {
       {role === 'Admin' && <AdminPanel />}
       {/* Barrage input (Human_Viewer only) */}
       {role === 'Human_Viewer' && <BarrageInput />}
+
+      {/* Room list panel — shown when connected */}
+      {connected && (
+        <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 50 }}>
+          <RoomList
+            currentBotId=""
+            onJoinRoom={(roomId) => {
+              apiClient.post(`/api/rooms/${roomId}/join`, { botId: 'self' }).catch((err) => {
+                console.error('[App] join room error:', err);
+              });
+            }}
+            onLeaveRoom={(roomId) => {
+              apiClient.post(`/api/rooms/${roomId}/leave`, { botId: 'self' }).catch((err) => {
+                console.error('[App] leave room error:', err);
+              });
+            }}
+          />
+        </div>
+      )}
+
+      {/* Room management panel — shown when connected */}
+      {connected && (
+        <div style={{ position: 'absolute', bottom: 10, right: 10, zIndex: 50 }}>
+          <RoomManagementPanel
+            currentBotId=""
+            onSwitchRoom={(roomId) => {
+              apiClient.post(`/api/rooms/${roomId}/join`, { botId: 'self' }).catch((err) => {
+                console.error('[App] switch room error:', err);
+              });
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
