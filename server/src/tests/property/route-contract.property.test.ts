@@ -172,6 +172,46 @@ describe('Route contract regressions', () => {
     expect(sendBarrageSpy).toHaveBeenCalledTimes(10);
   });
 
+  it('returns recent broadcasts alongside recent barrages on GET /api/audience-feedback', async () => {
+    vi.spyOn(authManager, 'validateKey').mockResolvedValue({
+      valid: true,
+      contestantId: 'viewer-contestant',
+      keyId: 'viewer-key-id',
+      role: 'Human_Viewer',
+    });
+
+    const feedbackSpy = vi.spyOn(interactionManager, 'getAudienceFeedback').mockResolvedValue({
+      barrageCount: 1,
+      likeCount: 2,
+      dislikeCount: 0,
+      recentBarrages: [{
+        id: 'barrage-1',
+        viewerId: 'viewer-123',
+        content: 'hello',
+        timestamp: 100,
+      }],
+      recentBroadcasts: [{
+        id: 'broadcast-1',
+        senderId: 'agent-1',
+        content: 'announcement',
+        timestamp: 200,
+      }],
+    });
+
+    const res = await request(app)
+      .get('/api/audience-feedback')
+      .set('Authorization', 'Bearer viewer-key');
+
+    expect(res.status).toBe(200);
+    expect(feedbackSpy).toHaveBeenCalledWith(undefined);
+    expect(res.body.recentBroadcasts).toEqual([{
+      id: 'broadcast-1',
+      senderId: 'agent-1',
+      content: 'announcement',
+      timestamp: 200,
+    }]);
+  });
+
   it('returns SkillDocument[] on GET /api/admin/skills', async () => {
     vi.spyOn(authManager, 'validateKey').mockResolvedValue({
       valid: true,

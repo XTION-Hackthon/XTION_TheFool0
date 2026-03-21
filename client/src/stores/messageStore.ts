@@ -21,6 +21,8 @@ export interface MessageState {
   addTalkMessage: (msg: TalkMessage) => void;
   addBroadcastMessage: (msg: BroadcastMessage) => void;
   addBarrageMessage: (msg: BarrageMessage) => void;
+  setBroadcastMessages: (messages: BroadcastMessage[]) => void;
+  setBarrageMessages: (messages: BarrageMessage[]) => void;
 
   reset: () => void;
 }
@@ -42,6 +44,16 @@ export const useMessageStore = create<MessageState>((set) => ({
 
   addBarrageMessage: (msg) =>
     set((state) => ({ barrageMessages: appendCapped(state.barrageMessages, msg) })),
+
+  setBroadcastMessages: (messages) =>
+    set({
+      broadcastMessages: messages.length > MAX_MESSAGES ? messages.slice(messages.length - MAX_MESSAGES) : messages,
+    }),
+
+  setBarrageMessages: (messages) =>
+    set({
+      barrageMessages: messages.length > MAX_MESSAGES ? messages.slice(messages.length - MAX_MESSAGES) : messages,
+    }),
 
   reset: () => set(initialState),
 }));

@@ -10,6 +10,7 @@ import { connections, sendEvent, broadcast } from '../ws';
 import type {
   IInteractionManager,
   BarrageMessage,
+  BroadcastMessage,
   ViewerInteractionSummary,
   ServerEvent,
 } from '../types';
@@ -134,14 +135,25 @@ export class InteractionManagerClass implements IInteractionManager {
       'SELECT id, viewer_id, content, timestamp FROM barrage_messages ORDER BY timestamp DESC LIMIT 10',
     ).all() as Array<{ id: string; viewer_id: string; content: string; timestamp: number }>;
 
-    const recentBarrages: BarrageMessage[] = recentRows.map(r => ({
+    const recentBarrages: BarrageMessage[] = recentRows.reverse().map(r => ({
       id: r.id,
       viewerId: r.viewer_id,
       content: r.content,
       timestamp: r.timestamp,
     }));
 
-    return { barrageCount, likeCount, dislikeCount, recentBarrages };
+    const recentBroadcastRows = this.db.prepare(
+      'SELECT id, sender_id, content, timestamp FROM broadcast_messages ORDER BY timestamp DESC LIMIT 10',
+    ).all() as Array<{ id: string; sender_id: string; content: string; timestamp: number }>;
+
+    const recentBroadcasts: BroadcastMessage[] = recentBroadcastRows.reverse().map((row) => ({
+      id: row.id,
+      senderId: row.sender_id,
+      content: row.content,
+      timestamp: row.timestamp,
+    }));
+
+    return { barrageCount, likeCount, dislikeCount, recentBarrages, recentBroadcasts };
   }
 }
 

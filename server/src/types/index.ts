@@ -217,6 +217,7 @@ export interface ViewerInteractionSummary {
   likeCount: number;
   dislikeCount: number;
   recentBarrages: BarrageMessage[];
+  recentBroadcasts: BroadcastMessage[];
 }
 
 // -----------------------------------------------------------------------------

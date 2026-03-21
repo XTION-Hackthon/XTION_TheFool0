@@ -26,6 +26,20 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Support first-run bootstrap against a brand-new DB file before the server
+// has created the full schema.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS keys (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    contestant_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'Agent_Player',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at INTEGER NOT NULL,
+    revoked_at INTEGER
+  );
+`);
+
 const activeAdmins = db
   .prepare("SELECT id, contestant_name, created_at FROM keys WHERE role = 'Admin' AND status = 'active' ORDER BY created_at DESC")
   .all();

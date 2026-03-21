@@ -9,6 +9,7 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { initStores } from './stores';
 import { useRoleStore } from './stores/roleStore';
 import { useGameStore } from './stores/gameStore';
+import { useMessageStore } from './stores/messageStore';
 import { wsClient } from './services/ws-client';
 import { apiClient } from './services/api-client';
 import { UIOverlay } from './components/UIOverlay';
@@ -62,6 +63,21 @@ type WorldOverviewResponse = {
   zones: Zone[];
 };
 
+type AudienceFeedResponse = {
+  recentBarrages: Array<{
+    id: string;
+    viewerId: string;
+    content: string;
+    timestamp: number;
+  }>;
+  recentBroadcasts: Array<{
+    id: string;
+    senderId: string;
+    content: string;
+    timestamp: number;
+  }>;
+};
+
 type ContestantListItem = {
   id: string;
   name: string;
@@ -97,6 +113,9 @@ function App() {
   const resetWorld = useGameStore((s) => s.reset);
   const initWorldState = useGameStore((s) => s.initWorldState);
   const setConnected = useGameStore((s) => s.setConnected);
+  const resetMessages = useMessageStore((s) => s.reset);
+  const setBroadcastMessages = useMessageStore((s) => s.setBroadcastMessages);
+  const setBarrageMessages = useMessageStore((s) => s.setBarrageMessages);
   const notifications = useUiStore((s) => s.notifications);
   const dismissNotification = useUiStore((s) => s.dismissNotification);
 
@@ -111,12 +130,14 @@ function App() {
       wsClient.disconnect();
       resetRole();
       resetWorld();
+      resetMessages();
       setConnecting(false);
       return;
     }
 
     setConnecting(true);
     resetWorld();
+    resetMessages();
 
     void (async () => {
       try {
@@ -135,9 +156,10 @@ function App() {
           setConnected(false);
 
           const loadViewerSnapshot = async () => {
-            const [world, contestants] = await Promise.all([
+            const [world, contestants, audienceFeed] = await Promise.all([
               apiClient.get<WorldOverviewResponse>('/api/world'),
               apiClient.get<ContestantListItem[]>('/api/contestants'),
+              apiClient.get<AudienceFeedResponse>('/api/audience-feedback'),
             ]);
 
             if (!active) return;
@@ -155,6 +177,12 @@ function App() {
               zones: world.zones,
               contestants: contestants.map(normalizeViewerContestant),
             });
+            setBroadcastMessages(
+              [...audienceFeed.recentBroadcasts].sort((a, b) => a.timestamp - b.timestamp),
+            );
+            setBarrageMessages(
+              [...audienceFeed.recentBarrages].sort((a, b) => a.timestamp - b.timestamp),
+            );
             setConnecting(false);
           };
 
@@ -176,6 +204,7 @@ function App() {
         setConnecting(false);
         wsClient.disconnect();
         resetWorld();
+        resetMessages();
       }
     })();
 
@@ -188,7 +217,7 @@ function App() {
       }
       wsClient.disconnect();
     };
-  }, [key, fetchRole, initWorldState, resetRole, resetWorld, setConnected]);
+  }, [key, fetchRole, initWorldState, resetMessages, resetRole, resetWorld, setBarrageMessages, setBroadcastMessages, setConnected]);
 
   // Key entry screen — shown when no key is configured
   if (!key) {
