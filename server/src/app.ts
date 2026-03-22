@@ -5,6 +5,8 @@
 
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import type { ErrorResponse } from './types/index';
 import { adminKeysRouter } from './routes/admin-keys';
 import { adminZonesRouter } from './routes/admin-zones';
@@ -22,7 +24,7 @@ import { interactionRouter } from './routes/interaction';
 import { statusRouter } from './routes/status';
 import { adminMonitorRouter } from './routes/admin-monitor';
 import { authRouter } from './routes/auth';
-import { roomsRouter } from './routes/rooms';
+import { roomsAdminRouter, roomsMemberRouter } from './routes/rooms';
 import { collisionRouter } from './routes/collision';
 import { mapEditorRouter } from './routes/map-editor';
 import { doorwaysRouter, roomDoorwaysRouter } from './routes/doorways';
@@ -37,6 +39,36 @@ export const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Skill Files — Direct HTTP endpoints for Markdown files
+// Allows agents to fetch skill docs directly: GET /skill.md, /heartbeat.md, etc.
+// ---------------------------------------------------------------------------
+
+const skillsDir = path.join(__dirname, '../../skills');
+
+app.get('/:filename.md', (req: Request, res: Response, next: NextFunction) => {
+  const filename = req.params['filename'] as string;
+  const allowedFiles = ['skill', 'heartbeat', 'messaging', 'rules', 'behavior-loop', 'openclaw-quickstart'];
+  
+  if (!allowedFiles.includes(filename)) {
+    return next();
+  }
+
+  const filepath = path.join(skillsDir, `${filename}.md`);
+  
+  // Security: prevent directory traversal
+  if (!filepath.startsWith(skillsDir)) {
+    return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
+  }
+
+  fs.readFile(filepath, 'utf-8', (err, data) => {
+    if (err) {
+      return res.status(404).json({ error: { code: 'FILE_NOT_FOUND', message: `Skill file not found: ${filename}.md` } });
+    }
+    res.type('text/markdown; charset=utf-8').send(data);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // API Docs endpoint — OpenAPI summary
@@ -98,7 +130,8 @@ app.use('/api', interactionRouter);
 app.use('/api', authMiddleware, statusRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/rooms', authMiddleware, roomsRouter);
+app.use('/api/rooms', authMiddleware, requireRole('Admin'), roomsAdminRouter);
+app.use('/api/rooms', authMiddleware, roomsMemberRouter);
 app.use('/api/doorways', authMiddleware, doorwaysRouter);
 app.use('/api/rooms/:id/doorways', authMiddleware, roomDoorwaysRouter);
 app.use('/api/collision', authMiddleware, collisionRouter);

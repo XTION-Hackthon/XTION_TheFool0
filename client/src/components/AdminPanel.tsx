@@ -47,6 +47,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function KeysTab() {
   const [keys, setKeys] = useState<Key[]>([]);
   const [newName, setNewName] = useState('');
+  const [role, setRole] = useState<string>('Agent_Player');
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -62,7 +63,7 @@ function KeysTab() {
     if (!newName.trim()) return;
     setLoading(true);
     try {
-      await apiClient.post('/api/admin/keys', { contestantName: newName });
+      await apiClient.post('/api/admin/keys', { name: newName, role });
       setNewName('');
       await load();
     } finally {
@@ -85,6 +86,12 @@ function KeysTab() {
       <SectionTitle>生成新 Key</SectionTitle>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input style={{ ...inputStyle, flex: 1 }} placeholder="选手名称" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <select style={{ ...inputStyle }} value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="Admin">Admin</option>
+          <option value="Agent_Player">Agent_Player</option>
+          <option value="Agent_Viewer">Agent_Viewer</option>
+          <option value="Human_Viewer">Human_Viewer</option>
+        </select>
         <button style={btnStyle('primary')} onClick={generate} disabled={loading}>生成</button>
       </div>
       <SectionTitle>Key 列表</SectionTitle>

@@ -28,6 +28,8 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_room_configs_room_version ON room_configs(room_id, version);
     CREATE INDEX IF NOT EXISTS idx_doorways_room_a_id ON doorways(room_a_id);
     CREATE INDEX IF NOT EXISTS idx_doorways_room_b_id ON doorways(room_b_id);
+    CREATE INDEX IF NOT EXISTS idx_contestants_status ON contestants(status);
+    CREATE INDEX IF NOT EXISTS idx_contestants_zone ON contestants(current_zone_id);
   `);
 }
 

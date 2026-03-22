@@ -140,7 +140,52 @@ function markContestantOffline(contestantId: string): void {
   db.prepare(`
     UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE id = ?
   `).run(now, contestantId);
+  // Clean up orphan room_bots records (no FK cascade in SQLite)
+  db.prepare(`DELETE FROM room_bots WHERE bot_id = ?`).run(contestantId);
 }
+
+/**
+ * Forcefully disconnect a contestant by id.
+ * Closes the WebSocket, removes from connections map, cancels any pending
+ * offline timer, unregisters heartbeat, marks the contestant offline in DB,
+ * and broadcasts a leave event.
+ * Called by auth-manager when a key is revoked (Requirement 9).
+ */
+export function disconnectContestant(contestantId: string): void {
+  // Cancel any pending offline timer
+  const timer = disconnectTimers.get(contestantId);
+  if (timer) {
+    clearTimeout(timer);
+    disconnectTimers.delete(contestantId);
+  }
+
+  // Close WebSocket if connected
+  const ws = connections.get(contestantId);
+  if (ws) {
+    try {
+      ws.close(1008, 'KEY_REVOKED');
+    } catch {
+      // ignore close errors on already-closed sockets
+    }
+    connections.delete(contestantId);
+  }
+
+  // Unregister from heartbeat monitor
+  heartbeatMonitor.unregister(contestantId);
+
+  // Mark offline in DB
+  markContestantOffline(contestantId);
+
+  // Notify remaining contestants
+  broadcast(
+    {
+      type: 'contestant.leave',
+      payload: { id: contestantId, status: 'offline' },
+      timestamp: Date.now(),
+    },
+  );
+}
+
 
 function getAllOnlineContestants(): Contestant[] {
   const rows = db.prepare(`
@@ -356,15 +401,19 @@ async function handleAuth(
 // ---------------------------------------------------------------------------
 
 export function setupWebSocket(server: http.Server): WebSocketServer {
-  // Clean up stale online contestants on server startup
+  // Clean up stale online/timeout contestants on server startup
   // (all connections are lost when server restarts)
   console.log('[WS] Cleaning up stale online contestants from previous session...');
   const staleCount = db.prepare(`
-    UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE status = 'online'
+    UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE status IN ('online', 'timeout')
   `).run(Date.now()).changes;
   if (staleCount > 0) {
     console.log(`[WS] Marked ${staleCount} stale contestant(s) as offline`);
   }
+
+  // Clear all room_bots records (stale from previous session)
+  const roomBotsCount = db.prepare('DELETE FROM room_bots').run().changes;
+  console.log(`[WS] Cleared ${roomBotsCount} stale room_bots record(s)`);
 
   const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -475,7 +524,11 @@ export function handleMessage(
 
 export function sendEvent(ws: WebSocket, event: ServerEvent): void {
   if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(event));
+    try {
+      ws.send(JSON.stringify(event));
+    } catch (err) {
+      console.error('[WS] sendEvent error:', err);
+    }
   }
 }
 

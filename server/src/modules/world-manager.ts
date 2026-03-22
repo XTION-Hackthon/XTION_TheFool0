@@ -274,17 +274,21 @@ class WorldManager implements IWorldManager {
    * Requirements: 11.4, 11.5, 11.6
    */
   async modifyEnergy(contestantId: string, delta: number): Promise<number> {
-    const current = this.getEnergy(contestantId);
-    const newEnergy = Math.max(0, Math.min(100, current + delta));
+      // Atomic database-level update: clamp energy to [0, 100] in a single SQL statement
+      db.prepare(`
+        UPDATE contestants SET energy = MAX(0, MIN(100, energy + ?)) WHERE id = ?
+      `).run(delta, contestantId);
 
-    this.energyCache.set(contestantId, newEnergy);
+      // Re-read the actual value from the database and refresh the cache
+      const row = db.prepare(`
+        SELECT energy FROM contestants WHERE id = ?
+      `).get(contestantId) as ContestantEnergyRow | undefined;
 
-    db.prepare(`
-      UPDATE contestants SET energy = ? WHERE id = ?
-    `).run(newEnergy, contestantId);
+      const newEnergy = row?.energy ?? 100;
+      this.energyCache.set(contestantId, newEnergy);
 
-    return newEnergy;
-  }
+      return newEnergy;
+    }
 
   // ---------------------------------------------------------------------------
   // Zone CRUD（管理员，任务 4.3 完整实现，此处提供基础骨架）
@@ -385,6 +389,13 @@ class WorldManager implements IWorldManager {
   }
 
   async updateZoneRule(zoneTypeId: string, rule: ZoneRule): Promise<void> {
+    if (rule.allowedAPIs?.length && rule.forbiddenAPIs?.length) {
+      const conflicting = rule.allowedAPIs.filter(api => rule.forbiddenAPIs.includes(api));
+      if (conflicting.length > 0) {
+        throw new Error(`Zone rule conflict: APIs [${conflicting.join(', ')}] appear in both allowedAPIs and forbiddenAPIs`);
+      }
+    }
+
     const result = db.prepare(`
       UPDATE zone_rules
       SET allowed_apis = ?, forbidden_apis = ?, rate_limits = ?, attribute_effects = ?, custom_params = ?

@@ -278,9 +278,9 @@ class CoreAPIHandler implements ICoreAPIHandler {
     const { width, height } = worldManager.getMapDimensions();
     if (
       targetPosition.x < 0 ||
-      targetPosition.x > width ||
+      targetPosition.x >= width ||
       targetPosition.y < 0 ||
-      targetPosition.y > height
+      targetPosition.y >= height
     ) {
       throw new APIError('API_MOVE_OUT_OF_BOUNDS', '目标位置超出地图范围', 400);
     }

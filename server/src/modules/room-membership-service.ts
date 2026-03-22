@@ -60,6 +60,9 @@ class RoomMembershipService {
       if (newRoomId) {
         roomManager.addBotToRoom(newRoomId, botId, { x: newX, y: newY });
       }
+
+      // 同步 contestants 表的位置
+      db.prepare('UPDATE contestants SET position_x = ?, position_y = ? WHERE id = ?').run(newX, newY, botId);
     });
 
     updateTransaction();

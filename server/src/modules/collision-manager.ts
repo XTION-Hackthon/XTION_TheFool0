@@ -211,6 +211,16 @@ class CollisionManager {
       };
     }
 
+    // Verify target position is within a doorway
+    const doorways = doorwayManager.getDoorwayBetweenRooms(fromRoomId, toRoomId);
+    if (!this._isPositionInDoorway(targetPos.x, targetPos.y, doorways)) {
+      return {
+        valid: false,
+        error: 'Target position is not within a doorway',
+        collisionType: undefined,
+      };
+    }
+
     return { valid: true };
   }
 

@@ -182,6 +182,11 @@ class DoorwayManager {
       errors.push(`Doorway width ${config.width} is less than minimum 32px (bot collision box size)`);
     }
 
+    // 2b. 验证高度不小于 32px
+    if (config.height < 32) {
+      errors.push(`Doorway height ${config.height} is less than minimum 32px (bot collision box size)`);
+    }
+
     // 3. 验证门洞位置在共享边界上（需要两个房间都存在且有 bounds）
     if (roomA && roomB) {
       if (!roomA.bounds || !roomB.bounds) {

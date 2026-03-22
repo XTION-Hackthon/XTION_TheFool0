@@ -267,6 +267,9 @@ class RoomManager {
       return;
     }
 
+    // 全局去重：清理该 bot 在其他房间的记录，保证全局唯一房间归属
+    db.prepare('DELETE FROM room_bots WHERE bot_id = ? AND room_id != ?').run(botId, roomId);
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 

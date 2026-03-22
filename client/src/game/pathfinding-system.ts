@@ -1,4 +1,4 @@
-import type { Room, Doorway } from '../stores';
+import type { Room, Doorway, Bot } from '../stores';
 import { GridPathfinder, type Point } from './pathfinding/grid-pathfinder';
 import { RoomGraphBuilder } from './pathfinding/room-graph-builder';
 
@@ -40,6 +40,9 @@ export class PathfindingSystem {
     const room = this.rooms.get(roomId);
     if (!room) return [start];
 
+    const bounds = room.bounds;
+    if (!bounds) return [start];
+
     const walls = room.walls ?? [];
     const doorwaysArray = Array.from(this.doorways.values()).filter(
       (d) => d.roomAId === roomId || d.roomBId === roomId,
@@ -52,7 +55,7 @@ export class PathfindingSystem {
       doorwaysArray,
       bots,
       botId,
-      room.bounds,
+      bounds,
     );
   }
 

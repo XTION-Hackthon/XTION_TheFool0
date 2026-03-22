@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Database as DatabaseType } from 'better-sqlite3';
 import { db as globalDb } from '../db';
 import type { Key, IAuthManager, Role } from '../types';
+import { disconnectContestant } from '../ws';
 
 // =============================================================================
 // DB Row Type
@@ -159,6 +160,15 @@ export class AuthManagerClass implements IAuthManager {
 
     if (result.changes === 0) {
       throw new Error(`Key not found or already revoked: ${keyId}`);
+    }
+
+    // Disconnect any contestants associated with this key
+    const contestants = this.db.prepare(`
+      SELECT id FROM contestants WHERE key_id = ?
+    `).all(keyId) as { id: string }[];
+
+    for (const contestant of contestants) {
+      disconnectContestant(contestant.id);
     }
   }
 

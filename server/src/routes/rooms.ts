@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import { roomManager } from '../modules/room-manager';
+import { db } from '../db';
 import {
   broadcastBotJoined,
   broadcastBotLeft,
@@ -13,14 +14,18 @@ import {
 } from '../ws';
 import type { RoomType } from '../types';
 
-export const roomsRouter = Router();
+// Admin-only routes: POST / (create), PUT /:id (update), DELETE /:id (delete)
+export const roomsAdminRouter = Router();
+
+// Member routes: GET / (list), GET /:id (detail), POST /:id/join, POST /:id/leave
+export const roomsMemberRouter = Router();
 
 // ---------------------------------------------------------------------------
-// POST /api/rooms — 创建房间
+// POST /api/rooms — 创建房间 (Admin only)
 // Body: { name, type, capacity?, bounds? }
 // ---------------------------------------------------------------------------
 
-roomsRouter.post('/', async (req: Request, res: Response): Promise<void> => {
+roomsAdminRouter.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, type, capacity, bounds } = req.body as {
       name?: string;
@@ -49,6 +54,20 @@ roomsRouter.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    if (type === 'PrivateRoom') {
+      if (
+        !bounds ||
+        typeof bounds !== 'object' ||
+        typeof bounds.x1 !== 'number' || !Number.isFinite(bounds.x1) ||
+        typeof bounds.y1 !== 'number' || !Number.isFinite(bounds.y1) ||
+        typeof bounds.x2 !== 'number' || !Number.isFinite(bounds.x2) ||
+        typeof bounds.y2 !== 'number' || !Number.isFinite(bounds.y2)
+      ) {
+        res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'PrivateRoom 必须提供 bounds，且 x1, y1, x2, y2 均为有限数字' } });
+        return;
+      }
+    }
+
     const room = roomManager.createRoom({ name, type: type as RoomType, capacity, bounds });
     res.status(201).json(room);
   } catch (err) {
@@ -57,48 +76,11 @@ roomsRouter.post('/', async (req: Request, res: Response): Promise<void> => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/rooms — 获取所有房间（含 currentCount）
-// ---------------------------------------------------------------------------
-
-roomsRouter.get('/', async (_req: Request, res: Response): Promise<void> => {
-  try {
-    const rooms = roomManager.getAllRooms();
-    const result = rooms.map((room) => ({
-      ...room,
-      currentCount: roomManager.getCurrentCount(room.id),
-    }));
-    res.status(200).json(result);
-  } catch (err) {
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: (err as Error).message } });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// GET /api/rooms/:id — 获取房间详情（含 currentCount 和 bots）
-// ---------------------------------------------------------------------------
-
-roomsRouter.get('/:id', async (req: Request, res: Response): Promise<void> => {
-  try {
-    const room = roomManager.getRoom(req.params['id'] as string);
-    const currentCount = roomManager.getCurrentCount(room.id);
-    const bots = roomManager.getRoomBots(room.id);
-    res.status(200).json({ ...room, currentCount, bots });
-  } catch (err) {
-    const msg = (err as Error).message;
-    if (msg.includes('not found')) {
-      res.status(404).json({ error: { code: 'ROOM_NOT_FOUND', message: msg } });
-    } else {
-      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: msg } });
-    }
-  }
-});
-
-// ---------------------------------------------------------------------------
-// PUT /api/rooms/:id — 更新房间
+// PUT /api/rooms/:id — 更新房间 (Admin only)
 // Body: partial Room fields
 // ---------------------------------------------------------------------------
 
-roomsRouter.put('/:id', async (req: Request, res: Response): Promise<void> => {
+roomsAdminRouter.put('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, type, capacity, bounds } = req.body as {
       name?: string;
@@ -146,6 +128,24 @@ roomsRouter.put('/:id', async (req: Request, res: Response): Promise<void> => {
       updates.bounds = bounds;
     }
 
+    // Validate bounds when the resulting type is PrivateRoom
+    const existingRoom = roomManager.getRoom(req.params['id'] as string);
+    const effectiveType = updates.type ?? existingRoom.type;
+    if (effectiveType === 'PrivateRoom') {
+      const effectiveBounds = updates.bounds ?? existingRoom.bounds;
+      if (
+        !effectiveBounds ||
+        typeof effectiveBounds !== 'object' ||
+        typeof effectiveBounds.x1 !== 'number' || !Number.isFinite(effectiveBounds.x1) ||
+        typeof effectiveBounds.y1 !== 'number' || !Number.isFinite(effectiveBounds.y1) ||
+        typeof effectiveBounds.x2 !== 'number' || !Number.isFinite(effectiveBounds.x2) ||
+        typeof effectiveBounds.y2 !== 'number' || !Number.isFinite(effectiveBounds.y2)
+      ) {
+        res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'PrivateRoom 必须提供 bounds，且 x1, y1, x2, y2 均为有限数字' } });
+        return;
+      }
+    }
+
     roomManager.updateRoom(req.params['id'] as string, updates);
     const updated = roomManager.getRoom(req.params['id'] as string);
     res.status(200).json(updated);
@@ -160,10 +160,10 @@ roomsRouter.put('/:id', async (req: Request, res: Response): Promise<void> => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/rooms/:id — 删除房间
+// DELETE /api/rooms/:id — 删除房间 (Admin only)
 // ---------------------------------------------------------------------------
 
-roomsRouter.delete('/:id', async (req: Request, res: Response): Promise<void> => {
+roomsAdminRouter.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
     roomManager.deleteRoom(req.params['id'] as string);
     res.status(204).send();
@@ -178,26 +178,54 @@ roomsRouter.delete('/:id', async (req: Request, res: Response): Promise<void> =>
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/rooms/:id/join — 加入房间
-// Body: { botId, position? }
+// GET /api/rooms — 获取所有房间（含 currentCount）
 // ---------------------------------------------------------------------------
 
-roomsRouter.post('/:id/join', async (req: Request, res: Response): Promise<void> => {
+roomsMemberRouter.get('/', async (_req: Request, res: Response): Promise<void> => {
   try {
-    const { botId, position } = req.body as {
-      botId?: string;
+    const rooms = roomManager.getAllRooms();
+    const result = rooms.map((room) => ({
+      ...room,
+      currentCount: roomManager.getCurrentCount(room.id),
+    }));
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: (err as Error).message } });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/rooms/:id — 获取房间详情（含 currentCount 和 bots）
+// ---------------------------------------------------------------------------
+
+roomsMemberRouter.get('/:id', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const room = roomManager.getRoom(req.params['id'] as string);
+    const currentCount = roomManager.getCurrentCount(room.id);
+    const bots = roomManager.getRoomBots(room.id);
+    res.status(200).json({ ...room, currentCount, bots });
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes('not found')) {
+      res.status(404).json({ error: { code: 'ROOM_NOT_FOUND', message: msg } });
+    } else {
+      res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: msg } });
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/rooms/:id/join — 加入房间
+// Body: { position? }
+// Uses req.contestantId as botId (set by authMiddleware)
+// ---------------------------------------------------------------------------
+
+roomsMemberRouter.post('/:id/join', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const botId = (req as any).contestantId as string;
+    const { position } = req.body as {
       position?: { x: number; y: number };
     };
-
-    if (!botId || typeof botId !== 'string') {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'botId 不能为空' } });
-      return;
-    }
-
-    if (botId.length > 200) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'botId 长度不能超过200个字符' } });
-      return;
-    }
 
     // Validate position if provided
     if (position !== undefined) {
@@ -216,27 +244,41 @@ roomsRouter.post('/:id/join', async (req: Request, res: Response): Promise<void>
     // Verify room exists first
     roomManager.getRoom(roomId);
 
-    // Check capacity
-    if (!roomManager.canJoinRoom(roomId)) {
-      res.status(400).json({ error: { code: 'ROOM_AT_CAPACITY', message: '房间已满员' } });
-      return;
-    }
-
-    // Allocate spawn point if no position provided
+    // Wrap capacity check + spawn allocation + add in a transaction for atomicity
     let resolvedPosition = position;
-    let spawnPoint = null;
-    if (!resolvedPosition) {
-      spawnPoint = roomManager.allocateSpawnPoint(roomId);
-      if (spawnPoint) {
-        resolvedPosition = { x: spawnPoint.x, y: spawnPoint.y };
-      }
-    }
+    let spawnPoint: ReturnType<typeof roomManager.allocateSpawnPoint> | null = null;
 
-    roomManager.addBotToRoom(roomId, botId, resolvedPosition);
+    const joinTransaction = db.transaction(() => {
+      // Check capacity
+      if (!roomManager.canJoinRoom(roomId)) {
+        throw new Error('ROOM_AT_CAPACITY');
+      }
+
+      // Allocate spawn point if no position provided
+      if (!resolvedPosition) {
+        spawnPoint = roomManager.allocateSpawnPoint(roomId);
+        if (spawnPoint) {
+          resolvedPosition = { x: spawnPoint.x, y: spawnPoint.y };
+        }
+      }
+
+      roomManager.addBotToRoom(roomId, botId, resolvedPosition);
+    });
+
+    try {
+      joinTransaction();
+    } catch (txErr) {
+      if ((txErr as Error).message === 'ROOM_AT_CAPACITY') {
+        res.status(400).json({ error: { code: 'ROOM_AT_CAPACITY', message: '房间已满员' } });
+        return;
+      }
+      throw txErr;
+    }
 
     // Push spawn point assignment to the joining bot (Req 11)
-    if (spawnPoint && resolvedPosition) {
-      pushSpawnPointAssignment(botId, roomId, { id: spawnPoint.id, x: resolvedPosition.x, y: resolvedPosition.y });
+    if (spawnPoint !== null && resolvedPosition) {
+      const sp = spawnPoint as { id: string; x: number; y: number };
+      pushSpawnPointAssignment(botId, roomId, { id: sp.id, x: resolvedPosition.x, y: resolvedPosition.y });
     }
 
     // Broadcast bot joined and capacity update (Req 1, 2, 9)
@@ -265,18 +307,12 @@ roomsRouter.post('/:id/join', async (req: Request, res: Response): Promise<void>
 
 // ---------------------------------------------------------------------------
 // POST /api/rooms/:id/leave — 离开房间
-// Body: { botId }
+// Uses req.contestantId as botId (set by authMiddleware)
 // ---------------------------------------------------------------------------
 
-roomsRouter.post('/:id/leave', async (req: Request, res: Response): Promise<void> => {
+roomsMemberRouter.post('/:id/leave', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { botId } = req.body as { botId?: string };
-
-    if (!botId || typeof botId !== 'string') {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'botId 不能为空' } });
-      return;
-    }
-
+    const botId = (req as any).contestantId as string;
     const roomId = req.params['id'] as string;
 
     // Verify room exists

@@ -174,6 +174,13 @@ export class GameScene extends Phaser.Scene {
       this.worldRenderer.renderRooms(allRooms);
       this.worldRenderer.renderWalls(allWalls, allDoorways);
       this.worldRenderer.renderDoorways(allDoorways);
+
+      // Bug 4 fix: auto-load first room so currentRoomId is set and update() renders room content
+      const currentRoomId = useRoomStore.getState().currentRoomId;
+      const firstRoomId = currentRoomId ?? allRooms[0]?.id;
+      if (firstRoomId) {
+        this.loadRoom(firstRoomId);
+      }
     } catch (err) {
       // Non-fatal: world rendering is best-effort; game still functions
       console.warn('[GameScene] Failed to load world data:', err);

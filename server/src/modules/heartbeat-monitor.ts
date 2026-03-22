@@ -50,6 +50,7 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
 
   private contestants = new Map<string, ContestantState>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private pendingEnergyRetries = new Set<string>();
 
   // -------------------------------------------------------------------------
   // Public API
@@ -210,33 +211,51 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
   // -------------------------------------------------------------------------
 
   private applyRestZoneEnergyRegen(contestantId: string): void {
-    const rule = worldManager.getApplicableRules(contestantId);
-    const regenEffect = rule.attributeEffects.find(
-      (e) => e.attribute === 'energy' && e.type === 'regen' && (e.trigger === 'on_tick' || e.trigger === 'passive'),
-    );
-    if (!regenEffect) return;
+      const rule = worldManager.getApplicableRules(contestantId);
+      const regenEffect = rule.attributeEffects.find(
+        (e) => e.attribute === 'energy' && e.type === 'regen' && (e.trigger === 'on_tick' || e.trigger === 'passive'),
+      );
+      if (!regenEffect && !this.pendingEnergyRetries.has(contestantId)) return;
 
-    const current = worldManager.getEnergy(contestantId);
-    if (current >= 100) return; // 已满，无需回血
-
-    worldManager.modifyEnergy(contestantId, regenEffect.rate).then((newEnergy) => {
-      const ws = connections.get(contestantId);
-      if (ws) {
-        sendEvent(ws, {
-          type: 'energy.update',
-          payload: {
-            contestantId,
-            energy: newEnergy,
-            delta: regenEffect.rate,
-            reason: 'rest_zone_regen',
-          },
-          timestamp: Date.now(),
-        });
+      // If this is a retry but no regen effect applies anymore, clear the retry flag
+      if (!regenEffect) {
+        this.pendingEnergyRetries.delete(contestantId);
+        return;
       }
-    }).catch((err: unknown) => {
-      console.error('[HeartbeatMonitor] energy regen error:', err);
-    });
-  }
+
+      const current = worldManager.getEnergy(contestantId);
+      if (current >= 100) {
+        this.pendingEnergyRetries.delete(contestantId);
+        return; // 已满，无需回血
+      }
+
+      try {
+        // modifyEnergy is async by interface but backed by synchronous SQLite.
+        // Wrap in try/catch so synchronous errors are not silently swallowed.
+        worldManager.modifyEnergy(contestantId, regenEffect.rate).then((newEnergy) => {
+          this.pendingEnergyRetries.delete(contestantId);
+          const ws = connections.get(contestantId);
+          if (ws) {
+            sendEvent(ws, {
+              type: 'energy.update',
+              payload: {
+                contestantId,
+                energy: newEnergy,
+                delta: regenEffect.rate,
+                reason: 'rest_zone_regen',
+              },
+              timestamp: Date.now(),
+            });
+          }
+        }).catch((err: unknown) => {
+          console.error('[HeartbeatMonitor] energy regen error, will retry next tick:', err);
+          this.pendingEnergyRetries.add(contestantId);
+        });
+      } catch (err: unknown) {
+        console.error('[HeartbeatMonitor] energy regen error, will retry next tick:', err);
+        this.pendingEnergyRetries.add(contestantId);
+      }
+    }
 
   // -------------------------------------------------------------------------
   // Side effects

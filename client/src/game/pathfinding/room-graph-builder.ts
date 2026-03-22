@@ -1,4 +1,4 @@
-import type { Room, Doorway } from '../../types';
+import type { Room, Doorway } from '../../stores';
 import type { Point } from './grid-pathfinder';
 
 interface RoomNode {

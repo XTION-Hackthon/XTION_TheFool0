@@ -19,6 +19,7 @@ import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
 import { RoomList } from './components/RoomList';
 import { RoomManagementPanel } from './components/RoomManagementPanel';
 import { apiClient } from './services/api-client';
+import { useGameStore } from './stores/gameStore';
 import { useDoorwayStore } from './stores/doorwayStore';
 import type { Doorway } from './stores/doorwayStore';
 
@@ -105,6 +106,7 @@ function App() {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const role = useRoleStore((s) => s.role);
+  const contestantId = useRoleStore((s) => s.contestantId);
   const fetchRole = useRoleStore((s) => s.fetchRole);
 
   // Connect WebSocket when key is available
@@ -265,7 +267,7 @@ function App() {
       {connected && (
         <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 50 }}>
           <RoomList
-            currentBotId=""
+            currentBotId={contestantId ?? ''}
             onJoinRoom={(roomId) => {
               apiClient.post(`/api/rooms/${roomId}/join`, { botId: 'self' }).catch((err) => {
                 console.error('[App] join room error:', err);
@@ -284,11 +286,16 @@ function App() {
       {connected && (
         <div style={{ position: 'absolute', bottom: 10, right: 10, zIndex: 50 }}>
           <RoomManagementPanel
-            currentBotId=""
+            currentBotId={contestantId ?? ''}
             onSwitchRoom={(roomId) => {
-              apiClient.post(`/api/rooms/${roomId}/join`, { botId: 'self' }).catch((err) => {
-                console.error('[App] switch room error:', err);
-              });
+              const currentRoomId = useGameStore.getState().currentRoomId;
+              const doSwitch = async () => {
+                if (currentRoomId) {
+                  await apiClient.post(`/api/rooms/${currentRoomId}/leave`, {});
+                }
+                await apiClient.post(`/api/rooms/${roomId}/join`, {});
+              };
+              doSwitch().catch(err => console.error('[App] switch room error:', err));
             }}
           />
         </div>
