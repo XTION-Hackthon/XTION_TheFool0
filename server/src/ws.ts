@@ -295,7 +295,7 @@ async function handleAuth(
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
   const contestantName = name ?? keyRow?.contestant_name ?? 'Unknown';
 
-  // Agent_Viewer: allow connection and push world.state, but mark as read-only (no contestant registration)
+  // Agent_Viewer: allow connection and push world.state, then register for subsequent broadcasts
   if (role === 'Agent_Viewer') {
     const zones = getAllZones();
     const mapDims = getMapDimensions();
@@ -321,6 +321,12 @@ async function handleAuth(
       payload: worldStatePayload,
       timestamp: Date.now(),
     });
+
+    // Register viewer connection for subsequent broadcasts (Bug 3 fix)
+    const viewerId = `viewer-${keyId}`;
+    client.contestantId = viewerId;
+    connections.set(viewerId, ws);
+
     return;
   }
 

@@ -5,55 +5,19 @@
 // =============================================================================
 
 import { Router, type Request, type Response } from 'express';
-import { db } from '../db';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
 import type { ErrorResponse } from '../types';
 
 export const talkRouter = Router();
 
 // ---------------------------------------------------------------------------
-// Helper: extract contestant from Authorization header
-// Note: auth middleware (task 14.1) not yet implemented.
-// We look up the contestant by key from "Authorization: Bearer <key>"
-// ---------------------------------------------------------------------------
-
-interface ContestantRow {
-  id: string;
-  name: string;
-  status: string;
-}
-
-function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-
-  const key = authHeader.slice(7).trim();
-  if (!key) return null;
-
-  // Look up key → contestant
-  const keyRow = db.prepare(`
-    SELECT id FROM keys WHERE key = ? AND status = 'active'
-  `).get(key) as { id: string } | undefined;
-
-  if (!keyRow) return null;
-
-  const contestant = db.prepare(`
-    SELECT id, name, status FROM contestants WHERE key_id = ?
-  `).get(keyRow.id) as ContestantRow | undefined;
-
-  return contestant ?? null;
-}
-
-// ---------------------------------------------------------------------------
 // POST /api/talk
 // ---------------------------------------------------------------------------
 
 talkRouter.post('/', async (req: Request, res: Response): Promise<void> => {
-  // Auth
-  const contestant = getContestantFromRequest(req);
-  if (!contestant) {
+  // Auth: req.contestantId is guaranteed valid by authMiddleware (Bug 2 fix)
+  const contestantId = req.contestantId;
+  if (!contestantId) {
     const body: ErrorResponse = {
       error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key' },
     };
@@ -82,7 +46,7 @@ talkRouter.post('/', async (req: Request, res: Response): Promise<void> => {
 
   try {
     const result = await coreAPIHandler.handleTalk({
-      senderId: contestant.id,
+      senderId: contestantId,
       targetIds: target_ids as string[],
       message,
     });

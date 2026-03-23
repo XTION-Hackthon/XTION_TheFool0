@@ -5,7 +5,6 @@
 // =============================================================================
 
 import { Router, type Request, type Response } from 'express';
-import { db } from '../db';
 import { heartbeatMonitor } from '../modules/heartbeat-monitor';
 import { requireRole } from '../middleware/auth';
 import type { ErrorResponse, HeartbeatPayload } from '../types';
@@ -13,54 +12,15 @@ import type { ErrorResponse, HeartbeatPayload } from '../types';
 export const heartbeatRouter = Router();
 
 // ---------------------------------------------------------------------------
-// Helper: extract contestant from Authorization header or body fallback
-// ---------------------------------------------------------------------------
-
-interface ContestantRow {
-  id: string;
-  name: string;
-  status: string;
-}
-
-function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const key = authHeader.slice(7).trim();
-    if (key) {
-      const keyRow = db.prepare(`
-        SELECT id FROM keys WHERE key = ? AND status = 'active'
-      `).get(key) as { id: string } | undefined;
-
-      if (keyRow) {
-        const contestant = db.prepare(`
-          SELECT id, name, status FROM contestants WHERE key_id = ?
-        `).get(keyRow.id) as ContestantRow | undefined;
-        if (contestant) return contestant;
-      }
-    }
-  }
-
-  // Fallback: use contestant_id from body
-  const { contestant_id } = req.body as { contestant_id?: string };
-  if (contestant_id) {
-    const contestant = db.prepare(`
-      SELECT id, name, status FROM contestants WHERE id = ?
-    `).get(contestant_id) as ContestantRow | undefined;
-    if (contestant) return contestant;
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // POST /api/heartbeat
 // ---------------------------------------------------------------------------
 
 heartbeatRouter.post('/', requireRole('Admin', 'Agent_Player'), (req: Request, res: Response): void => {
-  const contestant = getContestantFromRequest(req);
-  if (!contestant) {
+  // Auth: req.contestantId is guaranteed valid by authMiddleware (Bug 2 fix)
+  const contestantId = req.contestantId;
+  if (!contestantId) {
     const body: ErrorResponse = {
-      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key 或 contestant_id' },
+      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key' },
     };
     res.status(401).json(body);
     return;
@@ -83,7 +43,7 @@ heartbeatRouter.post('/', requireRole('Admin', 'Agent_Player'), (req: Request, r
     return;
   }
 
-  heartbeatMonitor.onHeartbeat(contestant.id, payload as HeartbeatPayload);
+  heartbeatMonitor.onHeartbeat(contestantId, payload as HeartbeatPayload);
 
   res.status(200).json({
     serverTimestamp: Date.now(),

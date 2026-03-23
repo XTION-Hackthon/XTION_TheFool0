@@ -49,9 +49,15 @@ export async function authMiddleware(
 
   try {
     const result = await authManager.validateKey(key);
-    if (!result.valid || !result.contestantId) {
+    if (!result.valid || !result.keyId) {
       return next(httpError(401, 'AUTH_INVALID_KEY', 'Key 无效或已被吊销'));
     }
+
+    // Reject requests without contestant (except Admin)
+    if (!result.contestantId && result.role !== 'Admin') {
+      return next(httpError(401, 'AUTH_NO_CONTESTANT', 'Key 有效但尚未建立 contestant 记录，请先完成 WebSocket 认证'));
+    }
+
     req.contestantId = result.contestantId;
     req.keyId = result.keyId;
     // 若 role 为 NULL（历史数据），回退为 'Agent_Player'
@@ -61,6 +67,44 @@ export async function authMiddleware(
     next(err);
   }
 }
+
+/**
+ * Variant of authMiddleware that allows requests without contestant record.
+ * Used for routes that create contestant records (e.g., POST /rooms/:id/join).
+ * Still validates the key and sets req.keyId and req.role.
+ * Requirements: 8.2, 2.8
+ */
+export async function authMiddlewareAllowNoContestant(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const authHeader = req.headers['authorization'];
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next(httpError(401, 'AUTH_MISSING_KEY', '缺少 Authorization: Bearer <key> 头'));
+  }
+
+  const key = authHeader.slice(7).trim();
+  if (!key) {
+    return next(httpError(401, 'AUTH_MISSING_KEY', '缺少 Authorization: Bearer <key> 头'));
+  }
+
+  try {
+    const result = await authManager.validateKey(key);
+    if (!result.valid || !result.keyId) {
+      return next(httpError(401, 'AUTH_INVALID_KEY', 'Key 无效或已被吊销'));
+    }
+
+    req.contestantId = result.contestantId;
+    req.keyId = result.keyId;
+    req.role = result.role ?? 'Agent_Player';
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 
 /**
  * 工厂函数：生成角色检查中间件

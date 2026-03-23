@@ -106,7 +106,7 @@ export class AuthManagerClass implements IAuthManager {
     return {
       valid: true,
       keyId: row.key_id,
-      contestantId: row.contestant_id ?? row.key_id,
+      contestantId: row.contestant_id ?? undefined,
       role: row.role ?? 'Agent_Player',
     };
   }

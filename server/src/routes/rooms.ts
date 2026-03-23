@@ -4,6 +4,7 @@
 // =============================================================================
 
 import { Router, type Request, type Response } from 'express';
+import { v4 as uuidv4 } from 'uuid';
 import { roomManager } from '../modules/room-manager';
 import { db } from '../db';
 import {
@@ -17,8 +18,11 @@ import type { RoomType } from '../types';
 // Admin-only routes: POST / (create), PUT /:id (update), DELETE /:id (delete)
 export const roomsAdminRouter = Router();
 
-// Member routes: GET / (list), GET /:id (detail), POST /:id/join, POST /:id/leave
+// Member routes: GET / (list), GET /:id (detail), POST /:id/leave
 export const roomsMemberRouter = Router();
+
+// Join route: POST /:id/join — uses authMiddlewareAllowNoContestant (creates contestant if needed)
+export const roomsJoinRouter = Router();
 
 // ---------------------------------------------------------------------------
 // POST /api/rooms — 创建房间 (Admin only)
@@ -217,12 +221,14 @@ roomsMemberRouter.get('/:id', async (req: Request, res: Response): Promise<void>
 // ---------------------------------------------------------------------------
 // POST /api/rooms/:id/join — 加入房间
 // Body: { position? }
-// Uses req.contestantId as botId (set by authMiddleware)
+// Uses authMiddlewareAllowNoContestant — creates contestant if needed (Bug 4 fix)
+// Requirements: 2.8, 2.9, 3.7, 3.8
 // ---------------------------------------------------------------------------
 
-roomsMemberRouter.post('/:id/join', async (req: Request, res: Response): Promise<void> => {
+roomsJoinRouter.post('/:id/join', async (req: Request, res: Response): Promise<void> => {
   try {
-    const botId = (req as any).contestantId as string;
+    let botId = (req as any).contestantId as string | undefined;
+    const keyId = (req as any).keyId as string;
     const { position } = req.body as {
       position?: { x: number; y: number };
     };
@@ -244,6 +250,27 @@ roomsMemberRouter.post('/:id/join', async (req: Request, res: Response): Promise
     // Verify room exists first
     roomManager.getRoom(roomId);
 
+    // Bug 4 fix: Create contestant record if it doesn't exist
+    if (!botId) {
+      const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
+      const contestantName = keyRow?.contestant_name ?? 'Unknown';
+
+      let resolvedPos = position;
+      if (!resolvedPos) {
+        const sp = roomManager.allocateSpawnPoint(roomId);
+        resolvedPos = sp ? { x: sp.x, y: sp.y } : { x: 0, y: 0 };
+      }
+
+      const contestantId = uuidv4();
+      db.prepare(`
+        INSERT INTO contestants (id, key_id, name, status, position_x, position_y, current_zone_id, energy, installed_skills, attributes, connected_at)
+        VALUES (?, ?, ?, 'online', ?, ?, NULL, 100, '[]', '{}', ?)
+      `).run(contestantId, keyId, contestantName, resolvedPos.x, resolvedPos.y, Date.now());
+
+      botId = contestantId;
+      (req as any).contestantId = contestantId;
+    }
+
     // Wrap capacity check + spawn allocation + add in a transaction for atomicity
     let resolvedPosition = position;
     let spawnPoint: ReturnType<typeof roomManager.allocateSpawnPoint> | null = null;
@@ -262,7 +289,7 @@ roomsMemberRouter.post('/:id/join', async (req: Request, res: Response): Promise
         }
       }
 
-      roomManager.addBotToRoom(roomId, botId, resolvedPosition);
+      roomManager.addBotToRoom(roomId, botId!, resolvedPosition);
     });
 
     try {
@@ -278,11 +305,11 @@ roomsMemberRouter.post('/:id/join', async (req: Request, res: Response): Promise
     // Push spawn point assignment to the joining bot (Req 11)
     if (spawnPoint !== null && resolvedPosition) {
       const sp = spawnPoint as { id: string; x: number; y: number };
-      pushSpawnPointAssignment(botId, roomId, { id: sp.id, x: resolvedPosition.x, y: resolvedPosition.y });
+      pushSpawnPointAssignment(botId!, roomId, { id: sp.id, x: resolvedPosition.x, y: resolvedPosition.y });
     }
 
     // Broadcast bot joined and capacity update (Req 1, 2, 9)
-    broadcastBotJoined(roomId, botId, botId, resolvedPosition ?? { x: 0, y: 0 });
+    broadcastBotJoined(roomId, botId!, botId!, resolvedPosition ?? { x: 0, y: 0 });
     const currentCount = roomManager.getCurrentCount(roomId);
     const room = roomManager.getRoom(roomId);
     broadcastRoomCapacity(roomId, currentCount, room.capacity);

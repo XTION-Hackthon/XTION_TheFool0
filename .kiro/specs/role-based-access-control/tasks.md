@@ -153,7 +153,7 @@
 - [x] 11. 检查点 — 确保所有测试通过
   - 确保所有测试通过，如有问题请向用户提问。
 
-- [~] 12. 前端 roleStore
+- [ ] 12. 前端 roleStore
   - 新建 `client/src/stores/roleStore.ts`
   - 定义 `RoleState` 接口：`role: Role | null`、`keyId: string | null`、`contestantId: string | null`、`loading: boolean`、`fetchRole: () => Promise<void>`
   - 实现 `fetchRole()`：调用 `apiClient.get('/api/auth/me')`，成功后更新 store 状态
@@ -171,7 +171,7 @@
     - 根据角色隐藏/显示对应 UI 组件（管理员控制面板、弹幕输入框、投票按钮等）
     - _需求：7.2, 7.3, 7.4, 7.5_
 
-- [~] 14. 前端 403 错误处理
+- [ ] 14. 前端 403 错误处理
   - 修改 `client/src/services/api-client.ts` 中的 `handleResponse()` 函数
   - 当响应状态码为 403 时，通过 `uiStore.addNotification()` 显示"权限不足"提示
   - 不抛出未处理异常，保持 UI 稳定

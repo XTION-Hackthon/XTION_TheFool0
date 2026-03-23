@@ -16,58 +16,17 @@ import type { ErrorResponse, Position } from '../types';
 export const moveRouter = Router();
 
 // ---------------------------------------------------------------------------
-// Helper: extract contestant from Authorization header or senderId fallback
-// (Same pattern as broadcast.ts)
-// ---------------------------------------------------------------------------
-
-interface ContestantRow {
-  id: string;
-  name: string;
-  status: string;
-}
-
-function getContestantFromRequest(req: Request): ContestantRow | null {
-  const authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const key = authHeader.slice(7).trim();
-    if (key) {
-      const keyRow = db.prepare(`
-        SELECT id FROM keys WHERE key = ? AND status = 'active'
-      `).get(key) as { id: string } | undefined;
-
-      if (keyRow) {
-        const contestant = db.prepare(`
-          SELECT id, name, status FROM contestants WHERE key_id = ?
-        `).get(keyRow.id) as ContestantRow | undefined;
-        if (contestant) return contestant;
-      }
-    }
-  }
-
-  // Fallback: use senderId from body
-  const { senderId } = req.body as { senderId?: string };
-  if (senderId) {
-    const contestant = db.prepare(`
-      SELECT id, name, status FROM contestants WHERE id = ?
-    `).get(senderId) as ContestantRow | undefined;
-    if (contestant) return contestant;
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // POST /api/move
 // Body: { target: {x, y} | {zoneId: string} }
 // Returns: { newPosition, newZoneId, timestamp }
 // ---------------------------------------------------------------------------
 
 moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, res: Response): Promise<void> => {
-  // Auth / sender resolution
-  const contestant = getContestantFromRequest(req);
-  if (!contestant) {
+  // Auth: req.contestantId is guaranteed valid by authMiddleware (Bug 2 fix)
+  const contestantId = req.contestantId;
+  if (!contestantId) {
     const body: ErrorResponse = {
-      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key 或 senderId' },
+      error: { code: 'AUTH_MISSING_KEY', message: '未携带有效的认证 Key' },
     };
     res.status(401).json(body);
     return;
@@ -114,22 +73,22 @@ moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, 
       // Look up the room the bot is currently in
       const roomBotRow = db.prepare(
         'SELECT room_id FROM room_bots WHERE bot_id = ?'
-      ).get(contestant.id) as { room_id: string } | undefined;
+      ).get(contestantId) as { room_id: string } | undefined;
 
       if (roomBotRow) {
         const roomId = roomBotRow.room_id;
         collisionManager.updateSpatialIndex(roomId);
 
         // Check bot collision
-        if (collisionManager.checkBotCollision(roomId, contestant.id, targetPos)) {
-          broadcastCollisionEvent(roomId, contestant.id, 'bot', undefined, targetPos);
+        if (collisionManager.checkBotCollision(roomId, contestantId, targetPos)) {
+          broadcastCollisionEvent(roomId, contestantId, 'bot', undefined, targetPos);
           res.status(400).json({ error: { code: 'COLLISION_BOT', message: '移动被其他 bot 阻止' } });
           return;
         }
 
         // Check wall collision with doorway exclusion
         if (collisionManager.checkWallCollisionWithDoorways(roomId, targetPos, { width: 32, height: 32 })) {
-          broadcastCollisionEvent(roomId, contestant.id, 'wall', undefined, targetPos);
+          broadcastCollisionEvent(roomId, contestantId, 'wall', undefined, targetPos);
           res.status(400).json({ error: { code: 'COLLISION_WALL', message: '移动被墙体阻止' } });
           return;
         }
@@ -139,7 +98,7 @@ moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, 
         if (newRoom && newRoom.id !== roomId) {
           // Validate cross-room movement (doorway connection + capacity)
           const crossRoomValidation = collisionManager.validateCrossRoomMovement(
-            contestant.id, roomId, newRoom.id, targetPos
+            contestantId, roomId, newRoom.id, targetPos
           );
           if (!crossRoomValidation.valid) {
             res.status(400).json({ error: { code: 'NO_DOORWAY_CONNECTION', message: crossRoomValidation.error ?? '跨房间移动被阻止' } });
@@ -150,21 +109,21 @@ moveRouter.post('/', requireRole('Admin', 'Agent_Player'), async (req: Request, 
     }
 
     const result = await coreAPIHandler.handleMove({
-      contestantId: contestant.id,
+      contestantId,
       target: parsedTarget,
     });
 
     // Update room membership based on new position
     if ('x' in (parsedTarget as object) && 'y' in (parsedTarget as object)) {
       const targetPos = parsedTarget as Position;
-      const membershipChange = roomMembershipService.updateMembership(contestant.id, targetPos.x, targetPos.y);
+      const membershipChange = roomMembershipService.updateMembership(contestantId, targetPos.x, targetPos.y);
       if (membershipChange) {
-        broadcastMembershipChanged(contestant.id, membershipChange.previousRoomId, membershipChange.newRoomId, targetPos);
+        broadcastMembershipChanged(contestantId, membershipChange.previousRoomId, membershipChange.newRoomId, targetPos);
       }
       // Broadcast position delta for real-time sync
-      const roomBotRow2 = db.prepare('SELECT room_id FROM room_bots WHERE bot_id = ?').get(contestant.id) as { room_id: string } | undefined;
+      const roomBotRow2 = db.prepare('SELECT room_id FROM room_bots WHERE bot_id = ?').get(contestantId) as { room_id: string } | undefined;
       if (roomBotRow2) {
-        broadcastBotPositionDelta(roomBotRow2.room_id, contestant.id, targetPos);
+        broadcastBotPositionDelta(roomBotRow2.room_id, contestantId, targetPos);
       }
     }
 

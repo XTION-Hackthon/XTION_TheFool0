@@ -758,10 +758,30 @@ export class GameScene extends Phaser.Scene {
       };
     }
 
-    // 8. Valid — update bot position in roomStore
+    // 8. Call /api/move to sync server state (Bug 1 fix: Requirements 2.1, 2.2, 2.3)
+    try {
+      const moveResponse = await fetch(`${apiBaseUrl}/api/move`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ target: { x: targetPos.x, y: targetPos.y } }),
+      });
+
+      if (!moveResponse.ok) {
+        // Server sync failed — do NOT update local state (rollback)
+        return { success: false, error: 'Failed to sync server state' };
+      }
+    } catch (err) {
+      // Network error — do NOT update local state (rollback)
+      return { success: false, error: 'Network error during server sync' };
+    }
+
+    // 9. Valid — update bot position in roomStore
     useRoomStore.getState().updateBotPosition(currentRoomId, botId, targetPos);
 
-    // 9. Return success
+    // 10. Return success
     return { success: true };
   }
 
