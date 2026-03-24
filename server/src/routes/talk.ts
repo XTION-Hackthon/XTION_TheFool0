@@ -5,7 +5,10 @@
 // =============================================================================
 
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'crypto';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
+import { db } from '../db';
+import { locationManager } from '../modules/location-manager';
 import type { ErrorResponse } from '../types';
 
 export const talkRouter = Router();
@@ -45,11 +48,41 @@ talkRouter.post('/', async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
+    // Validate sender is in a room (not lobby)
+    const senderState = locationManager.getState(contestantId);
+    if (!senderState || senderState.locationState === 'lobby') {
+      const body: ErrorResponse = {
+        error: { code: 'SENDER_NOT_IN_ROOM', message: '发送方不在私聊房间内' },
+      };
+      res.status(400).json(body);
+      return;
+    }
+
+    // Validate target is in the same room
+    const receiverId = target_ids[0] as string;
+    const targetState = locationManager.getState(receiverId);
+    if (!targetState || targetState.locationState !== senderState.locationState) {
+      const body: ErrorResponse = {
+        error: { code: 'TARGET_NOT_IN_SAME_ROOM', message: '接收方不在同一房间内' },
+      };
+      res.status(400).json(body);
+      return;
+    }
+
+    // Extract room_id from locationState (e.g. 'room_3' → 3)
+    const roomId = parseInt(senderState.locationState.replace('room_', ''), 10);
+
     const result = await coreAPIHandler.handleTalk({
       senderId: contestantId,
       targetIds: target_ids as string[],
       message,
     });
+
+    // Archive private message to messages table
+    db.prepare(
+      `INSERT INTO messages (id, type, sender_id, receiver_id, room_id, content, timestamp)
+       VALUES (?, 'private', ?, ?, ?, ?, ?)`
+    ).run(randomUUID(), contestantId, receiverId, roomId, message, result.timestamp);
 
     res.status(200).json({ messageId: result.messageId, timestamp: result.timestamp });
   } catch (err) {

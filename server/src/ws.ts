@@ -11,7 +11,8 @@ import { db } from './db';
 import { authManager } from './modules/auth-manager';
 import { docDistributor } from './modules/doc-distributor';
 import { heartbeatMonitor } from './modules/heartbeat-monitor';
-import { roomManager } from './modules/room-manager';
+import { locationManager } from './modules/location-manager';
+import { phaseManager } from './modules/phase-manager';
 import type { ClientMessage, ServerEvent, Contestant, Position, Zone, Role } from './types/index';
 
 // ---------------------------------------------------------------------------
@@ -78,9 +79,14 @@ function getDefaultZone(): ZoneRow | null {
 }
 
 function getZoneCenterPosition(zone: ZoneRow): Position {
+  // 在地图中间区域随机生成出生点
+  const centerX = (zone.x1 + zone.x2) / 2;
+  const centerY = (zone.y1 + zone.y2) / 2;
+  const rangeX = (zone.x2 - zone.x1) * 0.3; // 中间60%区域
+  const rangeY = (zone.y2 - zone.y1) * 0.3;
   return {
-    x: (zone.x1 + zone.x2) / 2,
-    y: (zone.y1 + zone.y2) / 2,
+    x: centerX + (Math.random() * 2 - 1) * rangeX,
+    y: centerY + (Math.random() * 2 - 1) * rangeY,
   };
 }
 
@@ -140,8 +146,6 @@ function markContestantOffline(contestantId: string): void {
   db.prepare(`
     UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE id = ?
   `).run(now, contestantId);
-  // Clean up orphan room_bots records (no FK cascade in SQLite)
-  db.prepare(`DELETE FROM room_bots WHERE bot_id = ?`).run(contestantId);
 }
 
 /**
@@ -169,6 +173,9 @@ export function disconnectContestant(contestantId: string): void {
     }
     connections.delete(contestantId);
   }
+
+  // Task 6.5: Release location slot after removing from connections
+  locationManager.releaseSlot(contestantId);
 
   // Unregister from heartbeat monitor
   heartbeatMonitor.unregister(contestantId);
@@ -281,15 +288,37 @@ async function handleAuth(
     return;
   }
 
-  // Get default zone and compute initial position
+  // Admin connects as a read-only observer — same as Agent_Viewer but no audience slot
+  if (role === 'Admin') {
+    const zones = getAllZones();
+    const mapDims = getMapDimensions();
+    const onlineContestants = getAllOnlineContestants();
+
+    sendEvent(ws, {
+      type: 'world.state',
+      payload: {
+        map: { width: mapDims.width, height: mapDims.height, zones },
+        contestants: onlineContestants.map((c) => ({
+          id: c.id, name: c.name, position: c.position, zone: c.currentZoneId, status: c.status,
+        })),
+      },
+      timestamp: Date.now(),
+    });
+
+    // Register admin connection for subsequent broadcasts
+    const adminConnId = `admin-${keyId}`;
+    client.contestantId = adminConnId;
+    connections.set(adminConnId, ws);
+    return;
+  }
+
+  // Get default zone (still needed for DB zone reference)
   const defaultZone = getDefaultZone();
   if (!defaultZone) {
     sendError(ws, 'SYS_NO_ZONE', '系统未配置任何 Zone，请联系管理员');
     ws.close(1011, 'SYS_NO_ZONE');
     return;
   }
-
-  const initialPosition = getZoneCenterPosition(defaultZone);
 
   // Determine contestant name: use provided name or fall back to key's contestantName
   const keyRow = db.prepare('SELECT contestant_name FROM keys WHERE id = ?').get(keyId) as { contestant_name: string } | undefined;
@@ -327,11 +356,70 @@ async function handleAuth(
     client.contestantId = viewerId;
     connections.set(viewerId, ws);
 
+    // Task 6.2: Assign audience slot for Agent_Viewer
+    try {
+      locationManager.assignAudienceSlot(viewerId);
+    } catch (err: unknown) {
+      const e = err as { code?: string };
+      if (e.code === 'AUDIENCE_FULL') {
+        sendError(ws, 'AUDIENCE_FULL', '观众席已满，无法连接');
+        ws.close(1008, 'AUDIENCE_FULL');
+        connections.delete(viewerId);
+        client.contestantId = null;
+        return;
+      }
+      throw err;
+    }
+
     return;
   }
 
-  // Register/update contestant in DB
-  const contestant = upsertContestant(keyId, contestantName, initialPosition, defaultZone.id);
+  // Task 6.1: Assign lobby slot BEFORE upsertContestant so position is correct.
+  // Look up existing contestant id (or generate a new one) to assign the slot first.
+  const existingRow = db.prepare('SELECT id FROM contestants WHERE key_id = ?').get(keyId) as { id: string } | undefined;
+  const preAssignId = existingRow?.id ?? uuidv4();
+
+  let initialPosition: Position;
+  try {
+    initialPosition = locationManager.assignLobbySlot(preAssignId);
+  } catch (err: unknown) {
+    const e = err as { code?: string };
+    if (e.code === 'LOBBY_FULL') {
+      sendError(ws, 'LOBBY_FULL', '大厅已满，无法连接');
+      ws.close(1008, 'LOBBY_FULL');
+      return;
+    }
+    throw err;
+  }
+
+  // Register/update contestant in DB with the correct lobby slot position.
+  // upsertContestant uses the same id for existing contestants; for new ones it generates
+  // a new UUID — but since we pre-looked up the id above, preAssignId matches existing.id
+  // or is a fresh UUID that upsertContestant will also use (we pass it via the insert path).
+  // For new contestants, we insert directly with preAssignId to keep ids in sync.
+  let contestant: Contestant;
+  if (existingRow) {
+    contestant = upsertContestant(keyId, contestantName, initialPosition, defaultZone.id);
+  } else {
+    // Insert new contestant with the pre-assigned id so it matches the lobby slot
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO contestants (id, key_id, name, status, position_x, position_y, current_zone_id, energy, installed_skills, attributes, connected_at)
+      VALUES (?, ?, ?, 'online', ?, ?, ?, 100, '[]', '{}', ?)
+    `).run(preAssignId, keyId, contestantName, initialPosition.x, initialPosition.y, defaultZone.id, now);
+    contestant = {
+      id: preAssignId,
+      keyId,
+      name: contestantName,
+      status: 'online',
+      position: initialPosition,
+      currentZoneId: defaultZone.id,
+      energy: 100,
+      installedSkills: [],
+      attributes: {},
+      connectedAt: now,
+    };
+  }
 
   // Cancel any pending offline timer for this contestant (reconnect scenario)
   const existingTimer = disconnectTimers.get(contestant.id);
@@ -400,6 +488,11 @@ async function handleAuth(
   docDistributor.pushMandatoryDocuments(contestant.id).catch((err: unknown) => {
     console.error('[WS] pushMandatoryDocuments error:', err);
   });
+
+  // Task 6.3: Push current phase to newly connected contestant (Requirement 13.6)
+  phaseManager.pushCurrentPhaseToAgent(contestant.id).catch((err: unknown) => {
+    console.error('[WS] pushCurrentPhaseToAgent error:', err);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -417,9 +510,7 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     console.log(`[WS] Marked ${staleCount} stale contestant(s) as offline`);
   }
 
-  // Clear all room_bots records (stale from previous session)
-  const roomBotsCount = db.prepare('DELETE FROM room_bots').run().changes;
-  console.log(`[WS] Cleared ${roomBotsCount} stale room_bots record(s)`);
+
 
   const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -443,8 +534,46 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 
     ws.on('close', () => {
       if (client.contestantId) {
+        // Task 6.4: Get location state BEFORE releasing (releaseSlot removes the state)
+        const locationState = locationManager.getState(client.contestantId);
+
+        // Task 6.4: Determine partner BEFORE releasing (releaseSlot clears room occupancy)
+        let partnerId: string | null = null;
+        if (locationState && locationState.locationState !== 'lobby') {
+          const roomMatch = locationState.locationState.match(/^room_(\d+)$/);
+          if (roomMatch) {
+            const roomId = parseInt(roomMatch[1], 10);
+            const occupancy = locationManager.getRoomOccupancy(roomId);
+            // Partner is whichever slot is NOT the disconnecting agent
+            if (occupancy.slotA === client.contestantId) {
+              partnerId = occupancy.slotB;
+            } else if (occupancy.slotB === client.contestantId) {
+              partnerId = occupancy.slotA;
+            }
+          }
+        }
+
         connections.delete(client.contestantId);
         heartbeatMonitor.unregister(client.contestantId);
+
+        // Task 6.4: Release the slot after removing from connections
+        locationManager.releaseSlot(client.contestantId);
+
+        // Task 6.4: If agent was in a room, notify the partner
+        if (locationState && locationState.locationState !== 'lobby' && partnerId) {
+          const roomMatch = locationState.locationState.match(/^room_(\d+)$/);
+          if (roomMatch) {
+            const roomId = parseInt(roomMatch[1], 10);
+            const partnerWs = connections.get(partnerId);
+            if (partnerWs) {
+              sendEvent(partnerWs, {
+                type: 'room.partner_left',
+                payload: { room_id: roomId, contestant_id: client.contestantId },
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
 
         const idToMark = client.contestantId;
 
@@ -568,8 +697,8 @@ let _batchTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Queue an event for batched delivery. Schedules a flush after 16ms if not already pending. */
 function queueBroadcast(event: ServerEvent): void {
-  const key = (event as { payload?: { roomId?: string } }).payload && typeof (event as { payload?: { roomId?: string } }).payload === 'object'
-    ? ((event as { payload: { roomId?: string } }).payload.roomId ?? '__global__')
+  const key = (event as { payload?: { zoneId?: string } }).payload && typeof (event as { payload?: { zoneId?: string } }).payload === 'object'
+    ? ((event as { payload: { zoneId?: string } }).payload.zoneId ?? '__global__')
     : '__global__';
 
   const queue = _pendingBroadcasts.get(key);
@@ -599,93 +728,15 @@ function queueBroadcast(event: ServerEvent): void {
   }
 }
 
-// Delta compression: track last sent room state per roomId
-const _lastRoomState: Map<string, string> = new Map();
-
-/**
- * Fetch current room state and broadcast to all connected clients.
- * Uses delta compression — skips broadcast if state hasn't changed.
- * Requirements: 1, 9
- */
-export function broadcastRoomState(roomId: string): void {
-  try {
-    const room = roomManager.getRoom(roomId);
-    const bots = roomManager.getRoomBots(roomId);
-    const currentCount = roomManager.getCurrentCount(roomId);
-
-    const payload = {
-      roomId,
-      room,
-      bots,
-      currentCount,
-      capacity: room.capacity,
-    };
-
-    const stateJson = JSON.stringify(payload);
-    const lastJson = _lastRoomState.get(roomId);
-
-    // Skip broadcast if nothing changed
-    if (lastJson === stateJson) return;
-
-    _lastRoomState.set(roomId, stateJson);
-
-    broadcast({
-      type: 'room.state',
-      payload,
-      timestamp: Date.now(),
-    });
-  } catch (err) {
-    console.error('[WS] broadcastRoomState error:', err);
-  }
-}
-
-/**
- * Broadcast room capacity change — batched for efficiency.
- * Requirements: 2, 9
- */
-export function broadcastRoomCapacity(roomId: string, currentCount: number, capacity: number): void {
-  queueBroadcast({
-    type: 'room.capacity',
-    payload: { roomId, currentCount, capacity },
-    timestamp: Date.now(),
-  });
-}
-
-/**
- * Broadcast bot joined event — batched for efficiency.
- * Requirements: 1, 2, 9
- */
-export function broadcastBotJoined(
-  roomId: string,
-  botId: string,
-  botName: string,
-  position: { x: number; y: number },
-): void {
-  queueBroadcast({
-    type: 'room.bot_joined',
-    payload: { roomId, botId, botName, position },
-    timestamp: Date.now(),
-  });
-}
-
-/**
- * Broadcast bot left event — batched for efficiency.
- * Requirements: 1, 2, 9
- */
-export function broadcastBotLeft(roomId: string, botId: string): void {
-  queueBroadcast({
-    type: 'room.bot_left',
-    payload: { roomId, botId },
-    timestamp: Date.now(),
-  });
-}
+// Delta compression: track last sent zone state per zoneId
+const _lastZoneState: Map<string, string> = new Map();
 
 /**
  * Broadcast collision event immediately (latency-sensitive).
  * Requirements: 3, 4, 5, 10
  */
 export function broadcastCollisionEvent(
-  roomId: string,
+  zoneId: string,
   botId: string,
   collisionType: 'bot' | 'wall',
   targetId: string | undefined,
@@ -693,60 +744,23 @@ export function broadcastCollisionEvent(
 ): void {
   broadcast({
     type: 'collision.event',
-    payload: { roomId, botId, collisionType, targetId, position },
+    payload: { zoneId, botId, collisionType, targetId, position },
     timestamp: Date.now(),
   });
-}
-
-/**
- * Push spawn point assignment immediately to a specific bot (latency-sensitive).
- * Requirements: 11
- */
-export function pushSpawnPointAssignment(
-  botId: string,
-  roomId: string,
-  spawnPoint: { id: string; x: number; y: number },
-): void {
-  const ws = connections.get(botId);
-  if (ws) {
-    sendEvent(ws, {
-      type: 'room.spawn_assigned',
-      payload: { roomId, botId, spawnPoint },
-      timestamp: Date.now(),
-    });
-  }
 }
 
 /**
  * Broadcast only the changed bot position (incremental sync).
- * Call this from the move route instead of broadcastRoomState for position updates.
  * Requirements: 6
  */
 export function broadcastBotPositionDelta(
-  roomId: string,
+  zoneId: string,
   botId: string,
   position: { x: number; y: number },
 ): void {
   broadcast({
-    type: 'room.bot_position',
-    payload: { roomId, botId, position },
-    timestamp: Date.now(),
-  });
-}
-
-/**
- * Broadcast room membership change when a bot crosses a doorway.
- * Requirements: 4.5, 4.6
- */
-export function broadcastMembershipChanged(
-  botId: string,
-  previousRoomId: string | null,
-  newRoomId: string | null,
-  position: { x: number; y: number },
-): void {
-  broadcast({
-    type: 'room.membership_changed',
-    payload: { botId, previousRoomId, newRoomId, position },
+    type: 'zone.bot_position',
+    payload: { zoneId, botId, position },
     timestamp: Date.now(),
   });
 }

@@ -617,17 +617,13 @@ describe('Preservation: findPath 和 findMultiRoomPath 运行时结果不变', (
   it('findPath 对相同输入产生一致结果', () => {
     // **Validates: Requirements 3.10**
     // We verify the pathfinding-system.ts file exists and exports PathfindingSystem
-    // Since the module uses client-side types, we test the grid-pathfinder directly
-    // which is the core algorithm.
     const filePath = path.resolve(__dirname, '../../../../client/src/game/pathfinding-system.ts');
     const content = fs.readFileSync(filePath, 'utf-8');
 
-    // Verify the module exports findPath and findMultiRoomPath methods
+    // Verify the module exports findPath method (findMultiRoomPath removed in zone-obstacle-system migration)
     const hasFindPath = /findPath\s*\(/.test(content);
-    const hasFindMultiRoomPath = /findMultiRoomPath\s*\(/.test(content);
 
     expect(hasFindPath).toBe(true);
-    expect(hasFindMultiRoomPath).toBe(true);
   });
 
   it('GridPathfinder.findPath 对相同输入产生确定性结果', () => {

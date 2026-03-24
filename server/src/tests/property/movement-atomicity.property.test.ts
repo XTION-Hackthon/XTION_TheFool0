@@ -1,6 +1,6 @@
 // =============================================================================
 // XTION_TheFool0 — 移动原子性属性测试
-// Feature: multi-room-collision-system
+// Feature: zone-obstacle-system
 // Requirements: 3, 5
 // =============================================================================
 
@@ -13,7 +13,7 @@ import fc from 'fast-check';
 // Models the atomic validate-then-commit pattern from collision-manager.ts
 // =============================================================================
 
-const BOT_SIZE = { width: 32, height: 32 };
+const BOT_SIZE = { width: 20, height: 20 };
 
 function aabbOverlap(
   ax: number, ay: number, aw: number, ah: number,
@@ -147,8 +147,8 @@ describe('Property 3: 移动原子性', () => {
     fc.assert(
       fc.property(
         posArb,
-        fc.integer({ min: -31, max: 31 }),
-        fc.integer({ min: -31, max: 31 }),
+        fc.integer({ min: -19, max: 19 }),
+        fc.integer({ min: -19, max: 19 }),
         (posA, dx, dy) => {
           const eng = new AtomicMovementEngine();
           eng.addBot({ botId: 'bot-a', x: posA.x, y: posA.y });
@@ -246,8 +246,8 @@ describe('Property 3: 移动原子性', () => {
     fc.assert(
       fc.property(
         posArb,
-        fc.integer({ min: -31, max: 31 }),
-        fc.integer({ min: -31, max: 31 }),
+        fc.integer({ min: -19, max: 19 }),
+        fc.integer({ min: -19, max: 19 }),
         (posA, dx, dy) => {
           const eng = new AtomicMovementEngine();
           eng.addBot({ botId: 'bot-a', x: posA.x, y: posA.y });
@@ -258,7 +258,7 @@ describe('Property 3: 移动原子性', () => {
           eng.addBot({ botId: 'bot-b', x: startX, y: startY });
 
           const before = eng.getPosition('bot-b')!;
-          // Target overlaps with bot-a (dx/dy within ±31 < BOT_SIZE 32)
+          // Target overlaps with bot-a (dx/dy within ±19 < BOT_SIZE 20)
           const result = eng.move('bot-b', posA.x + dx, posA.y + dy);
           const after = eng.getPosition('bot-b')!;
 

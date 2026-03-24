@@ -24,21 +24,11 @@ export interface GameState {
   // Speech bubbles: contestantId → bubble
   speechBubbles: Map<string, SpeechBubble>;
 
-  // Multi-room state
-  currentRoomId: string | null;
-  roomIds: string[];
-
   // Actions
   setConnected: (connected: boolean) => void;
   setAuthenticated: (authenticated: boolean) => void;
   setSpeechBubble: (contestantId: string, content: string, durationMs?: number) => void;
   clearSpeechBubble: (contestantId: string) => void;
-
-  // Room actions
-  setCurrentRoomId: (roomId: string | null) => void;
-  addRoomId: (roomId: string) => void;
-  removeRoomId: (roomId: string) => void;
-  switchRoom: (roomId: string) => void;
 
   // world.state — initialize full world state
   initWorldState: (payload: {
@@ -79,8 +69,6 @@ const initialState = {
   zones: new Map<string, Zone>(),
   contestants: new Map<string, Contestant>(),
   speechBubbles: new Map<string, SpeechBubble>(),
-  currentRoomId: null as string | null,
-  roomIds: [] as string[],
 };
 
 export const useGameStore = create<GameState>((set) => ({
@@ -88,27 +76,6 @@ export const useGameStore = create<GameState>((set) => ({
 
   setConnected: (connected) => set({ connected }),
   setAuthenticated: (authenticated) => set({ authenticated }),
-
-  setCurrentRoomId: (roomId) => set({ currentRoomId: roomId }),
-
-  addRoomId: (roomId) =>
-    set((state) => {
-      if (state.roomIds.includes(roomId)) return {};
-      return { roomIds: [...state.roomIds, roomId] };
-    }),
-
-  removeRoomId: (roomId) =>
-    set((state) => ({
-      roomIds: state.roomIds.filter((id) => id !== roomId),
-    })),
-
-  switchRoom: (roomId) =>
-    set((state) => {
-      const roomIds = state.roomIds.includes(roomId)
-        ? state.roomIds
-        : [...state.roomIds, roomId];
-      return { currentRoomId: roomId, roomIds };
-    }),
 
   setSpeechBubble: (contestantId, content, durationMs = 6000) =>
     set((state) => {

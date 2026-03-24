@@ -1,10 +1,10 @@
 /**
  * CollisionSystem — Client-side AABB collision detection with Grid-based spatial index
+ * Zone-level: uses zoneId, supports Wall and Obstacle collision
  * Requirements: 3, 4, 5, 8
  */
 
-import { Bot, Wall } from '../stores/roomStore';
-import { Doorway } from '../stores/doorwayStore';
+import type { Bot, Wall, Obstacle } from '../stores/collisionStore';
 
 export interface CollisionResult {
   hasCollision: boolean;
@@ -14,7 +14,7 @@ export interface CollisionResult {
 }
 
 export class CollisionSystem {
-  private static readonly BOT_SIZE = { width: 32, height: 32 };
+  static readonly BOT_SIZE = { width: 20, height: 20 };
   private static readonly GRID_CELL_SIZE = 128;
 
   // Spatial grid: cellKey -> botIds
@@ -22,7 +22,6 @@ export class CollisionSystem {
 
   /**
    * Build spatial index from bots.
-   * Each bot is mapped to the grid cell containing its center.
    */
   buildIndex(bots: Bot[]): void {
     this.grid.clear();
@@ -39,7 +38,6 @@ export class CollisionSystem {
 
   /**
    * Check if a position collides with any bot (excluding excludeBotId).
-   * Uses the spatial grid to find candidates, then performs AABB check.
    */
   checkBotCollision(
     position: { x: number; y: number },
@@ -47,7 +45,6 @@ export class CollisionSystem {
     excludeBotId?: string
   ): CollisionResult {
     const candidateIds = this._getCandidateBotIds(position);
-
     const botMap = new Map(bots.map((b) => [b.id, b]));
 
     for (const candidateId of candidateIds) {
@@ -73,7 +70,6 @@ export class CollisionSystem {
 
   /**
    * Check if a position collides with any wall.
-   * Wall x/y is the top-left corner; convert to center for AABB.
    */
   checkWallCollision(
     position: { x: number; y: number },
@@ -82,7 +78,6 @@ export class CollisionSystem {
     const mySize = CollisionSystem.BOT_SIZE;
 
     for (const wall of walls) {
-      // Convert wall top-left to center
       const wallCenter = {
         x: wall.x + wall.width / 2,
         y: wall.y + wall.height / 2,
@@ -103,34 +98,29 @@ export class CollisionSystem {
   }
 
   /**
-   * Check if a position collides with any wall, excluding doorway areas.
-   * If the position is within a doorway, it's not considered a collision.
-   * Requirements: 5.2, 5.4
+   * Check if a position collides with any obstacle.
+   * Requirements: 3.8
    */
-  checkWallCollisionWithDoorways(
+  checkObstacleCollision(
     position: { x: number; y: number },
-    walls: Wall[],
-    doorways: Doorway[]
+    obstacles: Obstacle[]
   ): CollisionResult {
     const mySize = CollisionSystem.BOT_SIZE;
 
-    for (const wall of walls) {
-      const wallCenter = {
-        x: wall.x + wall.width / 2,
-        y: wall.y + wall.height / 2,
+    for (const obs of obstacles) {
+      const obsCenter = {
+        x: obs.x + obs.width / 2,
+        y: obs.y + obs.height / 2,
       };
-      const wallSize = { width: wall.width, height: wall.height };
+      const obsSize = { width: obs.width, height: obs.height };
 
-      if (this._aabbOverlap(position, mySize, wallCenter, wallSize)) {
-        // Check if this position is within a doorway (doorway = no collision)
-        if (!this._isPositionInDoorway(position.x, position.y, doorways)) {
-          return {
-            hasCollision: true,
-            type: 'wall',
-            targetId: wall.id,
-            targetPosition: wallCenter,
-          };
-        }
+      if (this._aabbOverlap(position, mySize, obsCenter, obsSize)) {
+        return {
+          hasCollision: true,
+          type: 'wall',
+          targetId: obs.id,
+          targetPosition: obsCenter,
+        };
       }
     }
 
@@ -138,24 +128,27 @@ export class CollisionSystem {
   }
 
   /**
-   * Combined check: bot collision first, then wall collision.
+   * Combined check: bot → wall → obstacle.
+   * Requirements: 3.9
    */
   validateMove(
     position: { x: number; y: number },
     bots: Bot[],
     walls: Wall[],
+    obstacles: Obstacle[],
     excludeBotId?: string
   ): CollisionResult {
     const botResult = this.checkBotCollision(position, bots, excludeBotId);
     if (botResult.hasCollision) return botResult;
 
-    return this.checkWallCollision(position, walls);
+    const wallResult = this.checkWallCollision(position, walls);
+    if (wallResult.hasCollision) return wallResult;
+
+    return this.checkObstacleCollision(position, obstacles);
   }
 
   /**
    * Get bots within radius using spatial index.
-   * Computes the cell range covered by the circle, collects candidates,
-   * then filters by actual Euclidean distance.
    */
   getNearbyBots(
     position: { x: number; y: number },
@@ -201,13 +194,9 @@ export class CollisionSystem {
     return `${Math.floor(x / cellSize)},${Math.floor(y / cellSize)}`;
   }
 
-  /**
-   * Collect bot IDs from the grid cells that overlap the bot's bounding box
-   * centered at `position`.
-   */
   private _getCandidateBotIds(position: { x: number; y: number }): string[] {
     const cellSize = CollisionSystem.GRID_CELL_SIZE;
-    const half = CollisionSystem.BOT_SIZE.width / 2; // 16
+    const half = CollisionSystem.BOT_SIZE.width / 2;
 
     const minCellX = Math.floor((position.x - half) / cellSize);
     const maxCellX = Math.floor((position.x + half) / cellSize);
@@ -224,10 +213,6 @@ export class CollisionSystem {
     return ids;
   }
 
-  /**
-   * AABB overlap test using center positions.
-   * Returns true when the two rectangles intersect.
-   */
   private _aabbOverlap(
     aCenter: { x: number; y: number },
     aSize: { width: number; height: number },
@@ -238,23 +223,6 @@ export class CollisionSystem {
       Math.abs(aCenter.x - bCenter.x) < aSize.width / 2 + bSize.width / 2 &&
       Math.abs(aCenter.y - bCenter.y) < aSize.height / 2 + bSize.height / 2
     );
-  }
-
-  /**
-   * Check if a position is within any doorway area (center-based AABB).
-   */
-  private _isPositionInDoorway(x: number, y: number, doorways: Doorway[]): boolean {
-    for (const dw of doorways) {
-      const halfW = dw.width / 2;
-      const halfH = dw.height / 2;
-      if (
-        x >= dw.x - halfW && x <= dw.x + halfW &&
-        y >= dw.y - halfH && y <= dw.y + halfH
-      ) {
-        return true;
-      }
-    }
-    return false;
   }
 }
 

@@ -13,7 +13,6 @@ import { adminZonesRouter } from './routes/admin-zones';
 import { adminMoveRouter } from './routes/admin-move';
 import { talkRouter } from './routes/talk';
 import { broadcastRouter } from './routes/broadcast';
-import { moveRouter } from './routes/move';
 import { heartbeatRouter } from './routes/heartbeat';
 import { adminHeartbeatRouter } from './routes/admin-heartbeat';
 import { adminSkillsRouter } from './routes/admin-skills';
@@ -24,12 +23,14 @@ import { interactionRouter } from './routes/interaction';
 import { statusRouter } from './routes/status';
 import { adminMonitorRouter } from './routes/admin-monitor';
 import { authRouter } from './routes/auth';
-import { roomsAdminRouter, roomsMemberRouter, roomsJoinRouter } from './routes/rooms';
 import { collisionRouter } from './routes/collision';
-import { mapEditorRouter } from './routes/map-editor';
-import { doorwaysRouter, roomDoorwaysRouter } from './routes/doorways';
-import { authMiddleware, authMiddlewareAllowNoContestant, requireRole } from './middleware/auth';
-import pathfindingRouter from './routes/pathfinding';
+import { locationRouter } from './routes/location';
+import { invitationRouter } from './routes/invitation';
+import { leaveRoomRouter } from './routes/leave-room';
+import { adminLocationRouter } from './routes/admin-location';
+import { adminPhaseRouter, currentPhaseRouter } from './routes/admin-phase';
+import { messagesRouter } from './routes/messages';
+import { authMiddleware, requireRole } from './middleware/auth';
 
 export const app = express();
 
@@ -39,6 +40,13 @@ export const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Static map assets — serve client/public/maps directly
+// This ensures /maps/*.png works regardless of how Vite is started
+// ---------------------------------------------------------------------------
+const mapsDir = path.join(__dirname, '../../client/public/maps');
+app.use('/maps', express.static(mapsDir));
 
 // ---------------------------------------------------------------------------
 // Skill Files — Direct HTTP endpoints for Markdown files
@@ -118,7 +126,9 @@ app.use('/api/admin', authMiddleware, requireRole('Admin'), adminZonesRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMoveRouter);
 app.use('/api/talk', authMiddleware, talkRouter);
 app.use('/api/broadcast', authMiddleware, broadcastRouter);
-app.use('/api/move', authMiddleware, moveRouter);
+app.use('/api/move', (_req: Request, res: Response) => {
+  res.status(410).json({ error: { code: 'GONE', message: 'POST /api/move 已废弃。请使用新的邀请接口：POST /api/invitation' } });
+});
 app.use('/api/heartbeat', authMiddleware, heartbeatRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminHeartbeatRouter);
 app.use('/api/admin/skills', authMiddleware, requireRole('Admin'), adminSkillsRouter);
@@ -130,14 +140,14 @@ app.use('/api', interactionRouter);
 app.use('/api', authMiddleware, statusRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminMonitorRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/rooms', authMiddleware, requireRole('Admin'), roomsAdminRouter);
-app.use('/api/rooms', authMiddlewareAllowNoContestant, roomsJoinRouter);
-app.use('/api/rooms', authMiddleware, roomsMemberRouter);
-app.use('/api/doorways', authMiddleware, doorwaysRouter);
-app.use('/api/rooms/:id/doorways', authMiddleware, roomDoorwaysRouter);
 app.use('/api/collision', authMiddleware, collisionRouter);
-app.use('/api/map-editor', authMiddleware, requireRole('Admin'), mapEditorRouter);
-app.use('/api/pathfinding', authMiddleware, pathfindingRouter);
+app.use('/api/location', authMiddleware, locationRouter);
+app.use('/api/invitation', authMiddleware, invitationRouter);
+app.use('/api/leave-room', authMiddleware, leaveRoomRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminLocationRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminPhaseRouter);
+app.use('/api', authMiddleware, currentPhaseRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), messagesRouter);
 
 // ---------------------------------------------------------------------------
 // Unified error handler — { "error": { "code": "...", "message": "..." } }

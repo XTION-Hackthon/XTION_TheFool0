@@ -14,9 +14,18 @@ export function createGame(parent: HTMLElement): Phaser.Game {
   return new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    width: parent.clientWidth || window.innerWidth,
-    height: parent.clientHeight || window.innerHeight,
+    width: 1800,
+    height: 1000,
     backgroundColor: '#1a1a2e',
+    render: {
+      pixelArt: true,
+      antialias: false,
+    },
+    // Loader config — increase timeout for large assets
+    loader: {
+      timeout: 30000,       // 30s timeout (default ~varies by browser)
+      maxRetries: 2,        // Phaser built-in retry
+    },
     // Target ≥30 FPS (Phaser default is 60; setting min to 30)
     fps: {
       target: 60,
@@ -24,7 +33,7 @@ export function createGame(parent: HTMLElement): Phaser.Game {
       forceSetTimeOut: false,
     },
     scale: {
-      mode: Phaser.Scale.RESIZE,
+      mode: Phaser.Scale.FIT,
       autoCenter: Phaser.Scale.CENTER_BOTH,
     },
     scene: [BootScene, GameScene],

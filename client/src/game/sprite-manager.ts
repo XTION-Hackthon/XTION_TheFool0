@@ -21,12 +21,12 @@ import type { HealthStatus } from '../../../server/src/types/index';
 
 /** Tween duration range for movement (ms) */
 const TWEEN_MIN_MS = 400;
-const TWEEN_MAX_MS = 1500;
-/** Movement speed: pixels per millisecond */
-const MOVEMENT_SPEED = 0.3;
+const TWEEN_MAX_MS = 3000;
+/** Movement speed: pixels per millisecond — slower for natural feel */
+const MOVEMENT_SPEED = 0.08;
 
-/** Sprite dimensions */
-const SPRITE_SIZE = 40;
+/** Sprite dimensions — scaled down for natural size on 1800×1000 map */
+const SPRITE_SIZE = 32;
 
 /** Status dot colors (connection status) — Req 1.8 */
 const STATUS_DOT_COLORS: Record<Contestant['status'], number> = {
@@ -91,10 +91,10 @@ export class SpriteManager {
 
     const { x, y } = contestant.position;
 
-    // Base image — uses 'contestant' texture loaded in BootScene
-    const image = this.scene.add.image(0, 0, 'contestant')
-      .setDisplaySize(SPRITE_SIZE, SPRITE_SIZE)
-      .setOrigin(0.5, 0.5);
+    // Base image — uses 'ghost' texture, scaled to SPRITE_SIZE
+    const image = this.scene.add.image(0, 0, 'ghost')
+      .setOrigin(0.5, 0.5)
+      .setDisplaySize(SPRITE_SIZE, SPRITE_SIZE);
 
     // Name label — above sprite
     const nameLabel = this.scene.add.text(0, -(SPRITE_SIZE / 2 + 14), contestant.name, {
@@ -347,7 +347,8 @@ export class SpriteManager {
 
   /**
    * Tween container to (x, y) with duration proportional to distance.
-   * Duration clamped to [400ms, 1500ms] — Req 6.4.
+   * Duration clamped to [400ms, 3000ms].
+   * Switches sprite texture based on movement direction.
    */
   private tweenTo(group: SpriteGroup, x: number, y: number): void {
     // Stop any in-progress tween
@@ -358,8 +359,14 @@ export class SpriteManager {
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     // Calculate duration based on distance and movement speed
-    // Longer distances = longer duration, but clamped to reasonable range
     const duration = Phaser.Math.Clamp(dist / MOVEMENT_SPEED, TWEEN_MIN_MS, TWEEN_MAX_MS);
+
+    // Switch texture based on horizontal direction
+    if (Math.abs(dx) >= 1) {
+      const moveTexture = dx < 0 ? 'leftmove' : 'rightmove';
+      group.image.setTexture(moveTexture);
+      group.image.setDisplaySize(SPRITE_SIZE, SPRITE_SIZE);
+    }
 
     group.tween = this.scene.tweens.add({
       targets: group.container,
@@ -369,6 +376,9 @@ export class SpriteManager {
       ease: 'Quad.easeInOut',
       onComplete: () => {
         group.tween = null;
+        // Restore idle texture when movement finishes
+        group.image.setTexture('ghost');
+        group.image.setDisplaySize(SPRITE_SIZE, SPRITE_SIZE);
       },
     });
   }

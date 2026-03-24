@@ -7,7 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db';
 import { worldManager } from './world-manager';
 import { rateLimiter } from './rate-limiter';
-import { connections, sendEvent } from '../ws';
+import { connections, sendEvent, broadcast } from '../ws';
 import type {
   ICoreAPIHandler,
   TalkParams,
@@ -353,6 +353,14 @@ class CoreAPIHandler implements ICoreAPIHandler {
     if (!notifiedIds.has(contestantId)) {
       const ws = connections.get(contestantId);
       if (ws) sendEvent(ws, moveEvent);
+      notifiedIds.add(contestantId);
+    }
+
+    // Broadcast to all other connections not yet notified (Admin, viewers, etc.)
+    for (const [id, ws] of connections) {
+      if (!notifiedIds.has(id)) {
+        sendEvent(ws, moveEvent);
+      }
     }
 
     // 9. Zone 切换时推送 zone.rule.update 给本人

@@ -1,6 +1,6 @@
 // =============================================================================
 // XTION_TheFool0 — 出生点无碰撞属性测试
-// Feature: multi-room-collision-system
+// Feature: zone-obstacle-system
 // Requirements: 11
 // =============================================================================
 
@@ -13,7 +13,7 @@ import fc from 'fast-check';
 // Models the allocation logic from room-manager.ts
 // =============================================================================
 
-const BOT_COLLISION_THRESHOLD = 32; // pixels — same as BOT_SIZE.width/height
+const BOT_COLLISION_THRESHOLD = 20; // pixels — matches ghost sprite 20×20
 
 interface SpawnPoint { id: string; x: number; y: number }
 interface BotPosition { botId: string; x: number; y: number }

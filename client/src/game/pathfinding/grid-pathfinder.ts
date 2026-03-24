@@ -1,4 +1,4 @@
-import type { Wall, Doorway, Bot } from '../../stores';
+import type { Wall, Bot } from '../../stores/collisionStore';
 
 export interface Point {
   x: number;
@@ -45,7 +45,6 @@ export class GridPathfinder {
     start: Point,
     goal: Point,
     walls: Wall[],
-    doorways: Doorway[],
     _bots: Bot[],
     _botId: string,
     bounds: Bounds,
@@ -54,10 +53,10 @@ export class GridPathfinder {
     const goalGrid = this.worldToGrid(goal);
 
     // 检查起点和目标是否可通行
-    if (!this.isWalkable(startGrid, walls, doorways, bounds)) {
+    if (!this.isWalkable(startGrid, walls, bounds)) {
       return [start];
     }
-    if (!this.isWalkable(goalGrid, walls, doorways, bounds)) {
+    if (!this.isWalkable(goalGrid, walls, bounds)) {
       return [start];
     }
 
@@ -104,7 +103,7 @@ export class GridPathfinder {
         const neighborKey = `${neighbor.x},${neighbor.y}`;
 
         if (closedSet.has(neighborKey)) continue;
-        if (!this.isWalkable(neighbor, walls, doorways, bounds)) continue;
+        if (!this.isWalkable(neighbor, walls, bounds)) continue;
 
         const tentativeG = current.g + this.distance(current, neighbor);
         const existingNode = openSet.get(neighborKey);
@@ -174,7 +173,6 @@ export class GridPathfinder {
   private isWalkable(
     point: Point,
     walls: Wall[],
-    doorways: Doorway[],
     bounds: Bounds,
   ): boolean {
     // 检查边界
@@ -183,13 +181,6 @@ export class GridPathfinder {
     }
 
     const worldPoint = this.gridToWorld(point);
-
-    // 检查是否在门洞内
-    for (const doorway of doorways) {
-      if (this.isPointInDoorway(worldPoint, doorway)) {
-        return true;
-      }
-    }
 
     // 检查是否在墙体内
     for (const wall of walls) {
@@ -210,18 +201,6 @@ export class GridPathfinder {
       point.x <= wall.x + wall.width &&
       point.y >= wall.y &&
       point.y <= wall.y + wall.height
-    );
-  }
-
-  /**
-   * 检查点是否在门洞内
-   */
-  private isPointInDoorway(point: Point, doorway: Doorway): boolean {
-    return (
-      point.x >= doorway.x &&
-      point.x <= doorway.x + doorway.width &&
-      point.y >= doorway.y &&
-      point.y <= doorway.y + doorway.height
     );
   }
 

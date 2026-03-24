@@ -1,5 +1,5 @@
 // =============================================================================
-// XTION_TheFool0 — Collision API 路由
+// XTION_TheFool0 — Collision API 路由（Zone 级别）
 // POST /api/collision/validate-move
 // GET  /api/collision/nearby-bots
 // Requirements: 3, 4, 5
@@ -8,26 +8,26 @@
 import { Router, type Request, type Response } from 'express';
 import { collisionManager } from '../modules/collision-manager';
 import { broadcastCollisionEvent } from '../ws';
+import { worldManager } from '../modules/world-manager';
+import { db } from '../db';
 import type { Position } from '../types';
 
 export const collisionRouter = Router();
 
 // ---------------------------------------------------------------------------
 // POST /api/collision/validate-move
-// Body: { roomId: string, botId: string, targetPos: { x: number, y: number } }
-// Returns: { valid: boolean, error?: string, collisionType?: 'bot'|'wall', collidedWith?: string }
+// Body: { zoneId: string, botId: string, targetPos: { x: number, y: number } }
 // ---------------------------------------------------------------------------
 
 collisionRouter.post('/validate-move', async (req: Request, res: Response): Promise<void> => {
-  const { roomId, botId, targetPos } = req.body as {
-    roomId?: unknown;
+  const { zoneId, botId, targetPos } = req.body as {
+    zoneId?: unknown;
     botId?: unknown;
     targetPos?: unknown;
   };
 
-  // Validate required params
-  if (!roomId || typeof roomId !== 'string') {
-    res.status(400).json({ error: 'roomId 不能为空' });
+  if (!zoneId || typeof zoneId !== 'string') {
+    res.status(400).json({ error: 'zoneId 不能为空' });
     return;
   }
   if (!botId || typeof botId !== 'string') {
@@ -53,12 +53,16 @@ collisionRouter.post('/validate-move', async (req: Request, res: Response): Prom
   const position: Position = { x: pos['x'] as number, y: pos['y'] as number };
 
   try {
-    collisionManager.updateSpatialIndex(roomId);
-    const result = collisionManager.validateMovement(roomId, botId, position);
+    // Build spatial index from current bot positions in this zone
+    const botRows = db.prepare(
+      `SELECT id as botId, position_x as x, position_y as y FROM contestants WHERE current_zone_id = ? AND status != 'offline'`
+    ).all(zoneId) as Array<{ botId: string; x: number; y: number }>;
+    collisionManager.updateSpatialIndex(zoneId, botRows);
 
-    // Broadcast collision event when a collision is detected (Req 3, 4, 5, 10)
+    const result = collisionManager.validateMovement(zoneId, botId, position);
+
     if (!result.valid && result.collisionType) {
-      broadcastCollisionEvent(roomId, botId, result.collisionType, result.collidedWith, position);
+      broadcastCollisionEvent(zoneId, botId, result.collisionType, result.collidedWith, position);
     }
 
     res.status(200).json({
@@ -74,15 +78,14 @@ collisionRouter.post('/validate-move', async (req: Request, res: Response): Prom
 
 // ---------------------------------------------------------------------------
 // GET /api/collision/nearby-bots
-// Query: roomId, x, y, radius (default 100)
-// Returns: { botIds: string[] }
+// Query: zoneId, x, y, radius (default 100)
 // ---------------------------------------------------------------------------
 
 collisionRouter.get('/nearby-bots', async (req: Request, res: Response): Promise<void> => {
-  const { roomId, x, y, radius } = req.query as Record<string, string | undefined>;
+  const { zoneId, x, y, radius } = req.query as Record<string, string | undefined>;
 
-  if (!roomId) {
-    res.status(400).json({ error: 'roomId 不能为空' });
+  if (!zoneId) {
+    res.status(400).json({ error: 'zoneId 不能为空' });
     return;
   }
 
@@ -101,8 +104,11 @@ collisionRouter.get('/nearby-bots', async (req: Request, res: Response): Promise
   }
 
   try {
-    collisionManager.updateSpatialIndex(roomId);
-    const botIds = collisionManager.getNearbyBots(roomId, { x: parsedX, y: parsedY }, parsedRadius);
+    const botRows = db.prepare(
+      `SELECT id as botId, position_x as x, position_y as y FROM contestants WHERE current_zone_id = ? AND status != 'offline'`
+    ).all(zoneId) as Array<{ botId: string; x: number; y: number }>;
+    collisionManager.updateSpatialIndex(zoneId, botRows);
+    const botIds = collisionManager.getNearbyBots(zoneId, { x: parsedX, y: parsedY }, parsedRadius, botRows);
     res.status(200).json({ botIds });
   } catch (err) {
     res.status(500).json({ error: '内部服务器错误' });

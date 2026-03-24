@@ -9,11 +9,6 @@ import { wsClient } from '../services/ws-client';
 import { useGameStore } from './gameStore';
 import { useMessageStore } from './messageStore';
 import { useUiStore } from './uiStore';
-import { useRoomStore } from './roomStore';
-import { useCollisionStore } from './collisionStore';
-import { useDoorwayStore } from './doorwayStore';
-import type { Doorway } from './doorwayStore';
-import { apiClient } from '../services/api-client';
 import type { Contestant, Zone, TalkMessage, BroadcastMessage, BarrageMessage, GameMap } from '../../../server/src/types/index';
 
 export { useGameStore } from './gameStore';
@@ -21,14 +16,9 @@ export { useMessageStore } from './messageStore';
 export { useUiStore } from './uiStore';
 export { useRoleStore } from './roleStore';
 export type { Role } from './roleStore';
-export { useRoomStore } from './roomStore';
-export type { Room, Bot, Wall, SpawnPoint } from './roomStore';
+export { useZoneStore } from './zoneStore';
+export type { ZoneState } from './zoneStore';
 export { useCollisionStore } from './collisionStore';
-export type { CollisionBox, CollisionEvent, SpatialGrid } from './collisionStore';
-export { useEditorStore } from './editorStore';
-export type { EditorState } from './editorStore';
-export { useDoorwayStore } from './doorwayStore';
-export type { Doorway } from './doorwayStore';
 
 let initialized = false;
 
@@ -262,104 +252,9 @@ export function initStores(): void {
   // ── Connection state sync ────────────────────────────────────────────────────
   wsClient.onConnect(() => {
     useGameStore.getState().setConnected(true);
-
-    // Fetch rooms from API on connection to populate roomStore
-    apiClient.get<Array<{ id: string; name: string; type: 'MainHall' | 'PrivateRoom'; capacity: number; currentCount: number; bots: Array<{ botId: string; positionX: number; positionY: number }>; bounds?: { x1: number; y1: number; x2: number; y2: number } }>>('/api/rooms')
-      .then((rooms) => {
-        const mapped = rooms.map((r) => ({
-          id: r.id,
-          name: r.name,
-          type: r.type,
-          capacity: r.capacity,
-          currentCount: r.currentCount ?? 0,
-          bots: (r.bots ?? []).map((b: { botId: string; positionX: number; positionY: number }) => ({
-            id: b.botId,
-            name: b.botId,
-            position: { x: b.positionX ?? 0, y: b.positionY ?? 0 },
-          })),
-          walls: [],
-          spawnPoints: [],
-          ...(r.bounds ? { bounds: r.bounds } : {}),
-        }));
-        useRoomStore.getState().setRooms(mapped);
-
-        // Auto-select MainHall as current room
-        const mainHall = mapped.find((r) => r.type === 'MainHall');
-        if (mainHall) {
-          useRoomStore.getState().setCurrentRoom(mainHall.id);
-          useGameStore.getState().setCurrentRoomId(mainHall.id);
-        }
-      })
-      .catch((err) => {
-        console.error('[initStores] Failed to fetch rooms:', err);
-      });
   });
   wsClient.onDisconnect(() => {
-    // Reset world state on disconnect so stale contestants/zones don't persist
     useGameStore.getState().reset();
-  });
-
-  // ── room.botJoined — bot joined a room ──────────────────────────────────────
-  wsClient.on('room.bot_joined', (payload) => {
-    const p = payload as { roomId: string; botId: string; botName: string; position: { x: number; y: number } };
-    useRoomStore.getState().addBotToRoom(p.roomId, {
-      id: p.botId,
-      name: p.botName || p.botId,
-      position: p.position ?? { x: 0, y: 0 },
-    });
-  });
-
-  // ── room.bot_left — bot left a room ─────────────────────────────────────────
-  wsClient.on('room.bot_left', (payload) => {
-    const p = payload as { roomId: string; botId: string };
-    useRoomStore.getState().removeBotFromRoom(p.roomId, p.botId);
-  });
-
-  // ── room.capacity — room capacity update ────────────────────────────────────
-  wsClient.on('room.capacity', (payload) => {
-    const p = payload as { roomId: string; currentCount: number; capacity: number };
-    useRoomStore.getState().updateRoom(p.roomId, {
-      currentCount: p.currentCount,
-      capacity: p.capacity,
-    });
-  });
-
-  // ── collision.event — collision detected ────────────────────────────────────
-  wsClient.on('collision.event', (payload) => {
-    const p = payload as {
-      roomId: string;
-      botId: string;
-      collisionType: 'bot' | 'wall';
-      targetId?: string;
-      position: { x: number; y: number };
-    };
-    useCollisionStore.getState().addCollisionEvent({
-      type: p.collisionType === 'bot' ? 'bot-bot' : 'bot-wall',
-      botId: p.botId,
-      targetId: p.targetId,
-      position: p.position,
-      timestamp: Date.now(),
-    });
-  });
-
-  // ── room.spawn_assigned — spawn point assigned ──────────────────────────────
-  wsClient.on('room.spawn_assigned', (payload) => {
-    const p = payload as {
-      roomId: string;
-      botId: string;
-      spawnPoint: { id: string; x: number; y: number };
-    };
-    // Update bot position in room store to the assigned spawn point
-    useRoomStore.getState().updateBotPosition(p.roomId, p.botId, {
-      x: p.spawnPoint.x,
-      y: p.spawnPoint.y,
-    });
-  });
-
-  // ── room.bot_position — incremental bot position update ─────────────────────
-  wsClient.on('room.bot_position', (payload) => {
-    const p = payload as { roomId: string; botId: string; position: { x: number; y: number } };
-    useRoomStore.getState().updateBotPosition(p.roomId, p.botId, p.position);
   });
 
   // ── batch.events — batched events ───────────────────────────────────────────
@@ -367,7 +262,6 @@ export function initStores(): void {
     const p = payload as { events: Array<{ type: string; payload: unknown; timestamp: number }> };
     if (p.events) {
       for (const event of p.events) {
-        // Re-dispatch each batched event through the wsClient event system
         const listeners = (wsClient as unknown as { eventListeners: Map<string, Set<(payload: unknown, timestamp: number) => void>> }).eventListeners?.get(event.type);
         if (listeners) {
           for (const listener of listeners) {
@@ -380,44 +274,5 @@ export function initStores(): void {
         }
       }
     }
-  });
-
-  // ── room.membership_changed — bot moved between rooms ───────────────────────
-  // Server sends: { botId, previousRoomId, newRoomId, position }
-  wsClient.on('room.membership_changed', (payload) => {
-    const p = payload as {
-      botId: string;
-      previousRoomId: string | null;
-      newRoomId: string | null;
-      position: { x: number; y: number };
-    };
-    if (p.newRoomId) {
-      useGameStore.getState().setCurrentRoomId(p.newRoomId);
-    }
-    // Update bot position in roomStore for both old and new rooms
-    if (p.previousRoomId) {
-      useRoomStore.getState().removeBotFromRoom(p.previousRoomId, p.botId);
-    }
-    if (p.newRoomId) {
-      useRoomStore.getState().addBotToRoom(p.newRoomId, {
-        id: p.botId,
-        name: p.botId,
-        position: p.position ?? { x: 0, y: 0 },
-      });
-    }
-  });
-
-  // ── doorway.created — new doorway added ─────────────────────────────────────
-  // Server sends: { doorway: Doorway }
-  wsClient.on('doorway.created', (payload) => {
-    const p = payload as { doorway: Doorway };
-    useDoorwayStore.getState().addDoorway(p.doorway);
-  });
-
-  // ── doorway.deleted — doorway removed ───────────────────────────────────────
-  // Server sends: { doorwayId: string }
-  wsClient.on('doorway.deleted', (payload) => {
-    const p = payload as { doorwayId: string };
-    useDoorwayStore.getState().removeDoorway(p.doorwayId);
   });
 }

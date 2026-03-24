@@ -1,8 +1,6 @@
 /**
  * App — root React component
- * Initializes Zustand stores (WebSocket event wiring) and mounts the Phaser game.
- * Handles WebSocket connection setup with key authentication.
- * Requirements: 6.1, 6.5, 6.6, 6.10, 8.4, 8.5, 10.2
+ * 首页：API Key 输入 → 验证角色 → Admin 进管理后台，其他角色进游戏界面
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -13,32 +11,17 @@ import { useRoleStore } from './stores/roleStore';
 import { wsClient } from './services/ws-client';
 import { UIOverlay } from './components/UIOverlay';
 import { AttributePanel } from './components/AttributePanel';
-import { HeartbeatOverview } from './components/HeartbeatOverview';
-import { AdminPanel } from './components/AdminPanel';
+import { AdminDashboard } from './components/AdminDashboard.js';
 import { BarrageInput, VoteButtons } from './components/ViewerInteraction';
-import { RoomList } from './components/RoomList';
-import { RoomManagementPanel } from './components/RoomManagementPanel';
 import { apiClient } from './services/api-client';
-import { useGameStore } from './stores/gameStore';
-import { useDoorwayStore } from './stores/doorwayStore';
-import type { Doorway } from './stores/doorwayStore';
 
-// Initialize stores once (wires WebSocket events → Zustand)
 initStores();
 
-/**
- * Resolve the WebSocket URL.
- * In development (Vite proxy), use relative path /ws which proxies to ws://localhost:8080/ws.
- * In production, derive from window.location.
- */
 function getWsUrl(): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${window.location.host}/ws`;
 }
 
-/**
- * Read the API key from URL query params (?key=xxx) or localStorage.
- */
 function getStoredKey(): string {
   const params = new URLSearchParams(window.location.search);
   const keyFromUrl = params.get('key');
@@ -49,71 +32,127 @@ function getStoredKey(): string {
   return localStorage.getItem('openclaw_key') ?? '';
 }
 
-/**
- * Fetch all doorways from the API and initialize the doorwayStore.
- * If no rooms exist yet, create a default layout: two rooms connected by a doorway.
- * Requirement: 7.5
- */
-async function fetchDoorwaysAndInitLayout(): Promise<void> {
-  try {
-    // Fetch and initialize doorway store
-    const doorways = await apiClient.get<Doorway[]>('/api/doorways');
-    useDoorwayStore.getState().setDoorways(doorways);
-  } catch (err) {
-    console.error('[App] Failed to fetch doorways:', err);
-  }
-
-  try {
-    // Check if any rooms exist; if not, create a default two-room layout with a doorway
-    const rooms = await apiClient.get<Array<{ id: string }>>('/api/rooms');
-    if (rooms.length === 0) {
-      // Create Room A (left)
-      const roomA = await apiClient.post<{ id: string }>('/api/rooms', {
-        name: 'Room A',
-        type: 'MainHall',
-        capacity: 50,
-        bounds: { x1: 0, y1: 0, x2: 800, y2: 600 },
-      });
-      // Create Room B (right, sharing the right wall of Room A)
-      const roomB = await apiClient.post<{ id: string }>('/api/rooms', {
-        name: 'Room B',
-        type: 'PrivateRoom',
-        capacity: 10,
-        bounds: { x1: 800, y1: 0, x2: 1600, y2: 600 },
-      });
-      // Create a doorway on the shared boundary (x=800) between the two rooms
-      const doorway = await apiClient.post<Doorway>('/api/doorways', {
-        roomAId: roomA.id,
-        roomBId: roomB.id,
-        x: 800,
-        y: 250,
-        width: 100,
-        height: 100,
-      });
-      useDoorwayStore.getState().addDoorway(doorway);
-      console.log('[App] Default layout initialized: Room A ↔ Room B via doorway', doorway.id);
-    }
-  } catch (err) {
-    console.error('[App] Failed to initialize default layout:', err);
-  }
+async function fetchInitialData(): Promise<void> {
+  // Nothing to pre-fetch — world.state comes via WebSocket
 }
 
-function App() {
+// ─── Key Login Screen ─────────────────────────────────────────────────────────
+
+function KeyLoginScreen({ onConnect }: { onConnect: (key: string) => void }) {
+  const [inputKey, setInputKey] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleConnect = async () => {
+    const k = inputKey.trim();
+    if (!k) return;
+    setLoading(true);
+    setError('');
+    try {
+      // Validate key before connecting
+      localStorage.setItem('openclaw_key', k);
+      const me = await apiClient.get<{ role: string }>('/api/auth/me');
+      if (!me?.role) throw new Error('无效的 API Key');
+      onConnect(k);
+    } catch {
+      localStorage.removeItem('openclaw_key');
+      setError('API Key 无效或无法连接服务器');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      width: '100vw', height: '100vh',
+      background: 'linear-gradient(135deg, #0a0a1a 0%, #0d1b2a 50%, #0a0a1a 100%)',
+      fontFamily: '"Segoe UI", system-ui, sans-serif',
+    }}>
+      {/* Logo area */}
+      <div style={{ marginBottom: 48, textAlign: 'center' }}>
+        <div style={{
+          fontSize: 13, letterSpacing: 6, color: '#4a9eff', textTransform: 'uppercase',
+          marginBottom: 12, fontWeight: 500,
+        }}>XTION Platform</div>
+        <div style={{ fontSize: 36, fontWeight: 800, color: '#f0f9ff', letterSpacing: 2 }}>
+          TheFool<span style={{ color: '#4a9eff' }}>0</span>
+        </div>
+        <div style={{ color: '#4b5563', fontSize: 13, marginTop: 8 }}>
+          输入您的 API Key 以接入平台
+        </div>
+      </div>
+
+      {/* Card */}
+      <div style={{
+        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(74,158,255,0.2)',
+        borderRadius: 16, padding: '36px 40px', width: 400,
+        boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'block', color: '#9ca3af', fontSize: 12, marginBottom: 8, letterSpacing: 1 }}>
+            API KEY
+          </label>
+          <input
+            type="password"
+            placeholder="sk-..."
+            value={inputKey}
+            onChange={(e) => setInputKey(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+            autoFocus
+            style={{
+              width: '100%', padding: '12px 16px', fontSize: 14,
+              background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(74,158,255,0.25)',
+              borderRadius: 10, color: '#f0f9ff', outline: 'none', boxSizing: 'border-box',
+              transition: 'border-color 0.2s',
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)',
+            borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 12, marginBottom: 16,
+          }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        <button
+          onClick={handleConnect}
+          disabled={loading || !inputKey.trim()}
+          style={{
+            width: '100%', padding: '13px', fontSize: 14, fontWeight: 600,
+            background: loading || !inputKey.trim()
+              ? 'rgba(74,158,255,0.2)'
+              : 'linear-gradient(135deg, #2563eb, #4a9eff)',
+            border: 'none', borderRadius: 10, color: '#fff',
+            cursor: loading || !inputKey.trim() ? 'not-allowed' : 'pointer',
+            transition: 'all 0.2s', letterSpacing: 0.5,
+          }}
+        >
+          {loading ? '验证中…' : '连接平台'}
+        </button>
+      </div>
+
+      <div style={{ color: '#1f2937', fontSize: 11, marginTop: 32 }}>
+        XTION_TheFool0 · Powered by OpenClaw
+      </div>
+    </div>
+  );
+}
+
+// ─── Game View (non-admin roles) ──────────────────────────────────────────────
+
+function GameView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
-  const [key, setKey] = useState<string>(getStoredKey);
-  const [inputKey, setInputKey] = useState('');
-  const [connecting, setConnecting] = useState(false);
+  const [connecting, setConnecting] = useState(true);
   const [connected, setConnected] = useState(false);
   const role = useRoleStore((s) => s.role);
-  const contestantId = useRoleStore((s) => s.contestantId);
   const fetchRole = useRoleStore((s) => s.fetchRole);
+  const key = localStorage.getItem('openclaw_key') ?? '';
 
-  // Connect WebSocket when key is available
   useEffect(() => {
-    if (!key) return;
-
-    setConnecting(true);
     const wsUrl = getWsUrl();
     wsClient.connect(wsUrl, key);
 
@@ -121,187 +160,168 @@ function App() {
       setConnecting(false);
       setConnected(true);
       fetchRole();
-      // Fetch doorways and initialize default layout after connection
-      fetchDoorwaysAndInitLayout();
     });
     const unsubDisc = wsClient.onDisconnect(() => {
       setConnecting(false);
       setConnected(false);
     });
 
-    return () => {
-      unsub();
-      unsubDisc();
-      wsClient.disconnect();
-    };
+    return () => { unsub(); unsubDisc(); wsClient.disconnect(); };
   }, [key, fetchRole]);
 
-  // Mount Phaser game only after connected
   useEffect(() => {
     if (!connected || !containerRef.current || gameRef.current) return;
-
     gameRef.current = createGame(containerRef.current);
+    return () => { gameRef.current?.destroy(true); gameRef.current = null; };
+  }, [connected]);
 
+  return (
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', background: '#1a1a2e' }}>
+      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+
+      {connecting && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: 16,
+          fontFamily: 'system-ui, sans-serif', zIndex: 1000,
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 24, marginBottom: 12 }}>⟳</div>
+            正在连接服务器…
+          </div>
+        </div>
+      )}
+
+      <UIOverlay />
+      <AttributePanel />
+      {role === 'Human_Viewer' && <VoteButtons />}
+      {role === 'Human_Viewer' && <BarrageInput />}
+    </div>
+  );
+}
+
+// ─── Admin Game View (game + floating dashboard) ─────────────────────────────
+
+function AdminGameView({ onLogout }: { onLogout: () => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<Phaser.Game | null>(null);
+  const [showPanel, setShowPanel] = useState(false);
+  const key = localStorage.getItem('openclaw_key') ?? '';
+
+  // Connect Admin as read-only WebSocket observer so gameStore gets populated
+  useEffect(() => {
+    const wsUrl = getWsUrl();
+    wsClient.connect(wsUrl, key);
+    return () => { wsClient.disconnect(); };
+  }, [key]);
+
+  useEffect(() => {
+    // Small delay to ensure the container div is fully rendered and sized
+    const timer = setTimeout(() => {
+      if (containerRef.current && !gameRef.current) {
+        gameRef.current = createGame(containerRef.current);
+      }
+    }, 50);
     return () => {
+      clearTimeout(timer);
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, [connected]);
-
-  // Key entry screen — shown when no key is configured
-  if (!key) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: '100vw',
-          height: '100vh',
-          background: '#1a1a2e',
-          color: '#fff',
-          fontFamily: 'Arial, sans-serif',
-          gap: 16,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: 24 }}>XTION_TheFool0</h2>
-        <p style={{ margin: 0, color: '#aaa', fontSize: 14 }}>请输入您的 API Key 以接入平台</p>
-        <input
-          type="text"
-          placeholder="API Key"
-          value={inputKey}
-          onChange={(e) => setInputKey(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && inputKey.trim()) {
-              const k = inputKey.trim();
-              localStorage.setItem('openclaw_key', k);
-              setKey(k);
-            }
-          }}
-          style={{
-            padding: '10px 16px',
-            fontSize: 14,
-            borderRadius: 6,
-            border: '1px solid #444',
-            background: '#2a2a4e',
-            color: '#fff',
-            width: 320,
-            outline: 'none',
-          }}
-        />
-        <button
-          onClick={() => {
-            const k = inputKey.trim();
-            if (k) {
-              localStorage.setItem('openclaw_key', k);
-              setKey(k);
-            }
-          }}
-          style={{
-            padding: '10px 24px',
-            fontSize: 14,
-            borderRadius: 6,
-            border: 'none',
-            background: '#4caf50',
-            color: '#fff',
-            cursor: 'pointer',
-          }}
-        >
-          连接
-        </button>
-      </div>
-    );
-  }
+  }, []);
 
   return (
-    <div
-      style={{
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        overflow: 'hidden',
-        background: '#1a1a2e',
-      }}
-    >
-      {/* Phaser canvas container */}
+    <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', background: '#1a1a2e' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Connecting overlay */}
-      {connecting && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: 'rgba(0,0,0,0.6)',
-            color: '#fff',
-            fontSize: 18,
-            fontFamily: 'Arial, sans-serif',
-            zIndex: 1000,
-          }}
-        >
-          正在连接服务器…
-        </div>
-      )}
+      {/* Toggle button */}
+      <button
+        onClick={() => setShowPanel((v) => !v)}
+        style={{
+          position: 'absolute', top: 12, right: 12, zIndex: 200,
+          width: 44, height: 44, borderRadius: 12,
+          background: showPanel ? 'rgba(74,158,255,0.25)' : 'rgba(0,0,0,0.6)',
+          border: '1px solid rgba(74,158,255,0.4)',
+          color: '#4a9eff', fontSize: 20, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(8px)', transition: 'all 0.2s',
+        }}
+        title={showPanel ? '关闭管理面板' : '打开管理面板'}
+      >
+        {showPanel ? '✕' : '⚙'}
+      </button>
 
-      {/* React UI overlay — talk bubbles, broadcast banner, barrage */}
-      <UIOverlay />
-      {/* Attribute panel — shown when a Sprite is clicked */}
-      <AttributePanel />
-      {/* Vote buttons — shown when a Sprite is selected (Human_Viewer only) */}
-      {role === 'Human_Viewer' && <VoteButtons />}
-      {/* Heartbeat overview panel + flash alerts (Admin only) */}
-      {role === 'Admin' && <HeartbeatOverview />}
-      {/* Admin panel (Admin only) */}
-      {role === 'Admin' && <AdminPanel />}
-      {/* Barrage input (Human_Viewer only) */}
-      {role === 'Human_Viewer' && <BarrageInput />}
-
-      {/* Room list panel — shown when connected */}
-      {connected && (
-        <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 50 }}>
-          <RoomList
-            currentBotId={contestantId ?? ''}
-            onJoinRoom={(roomId) => {
-              apiClient.post(`/api/rooms/${roomId}/join`, { botId: 'self' }).catch((err) => {
-                console.error('[App] join room error:', err);
-              });
-            }}
-            onLeaveRoom={(roomId) => {
-              apiClient.post(`/api/rooms/${roomId}/leave`, { botId: 'self' }).catch((err) => {
-                console.error('[App] leave room error:', err);
-              });
-            }}
-          />
-        </div>
-      )}
-
-      {/* Room management panel — shown when connected */}
-      {connected && (
-        <div style={{ position: 'absolute', bottom: 10, right: 10, zIndex: 50 }}>
-          <RoomManagementPanel
-            currentBotId={contestantId ?? ''}
-            onSwitchRoom={(roomId) => {
-              const currentRoomId = useGameStore.getState().currentRoomId;
-              const doSwitch = async () => {
-                if (currentRoomId) {
-                  await apiClient.post(`/api/rooms/${currentRoomId}/leave`, {});
-                }
-                await apiClient.post(`/api/rooms/${roomId}/join`, {});
-              };
-              doSwitch().catch(err => console.error('[App] switch room error:', err));
-            }}
-          />
+      {/* Floating panel overlay */}
+      {showPanel && (
+        <div style={{
+          position: 'absolute', top: 12, right: 64, bottom: 12, zIndex: 160,
+          width: 'min(680px, calc(100vw - 88px))',
+          borderRadius: 16, overflow: 'hidden',
+          border: '1px solid rgba(74,158,255,0.25)',
+          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+          pointerEvents: 'auto',
+        }}>
+          <AdminDashboard onLogout={onLogout} />
         </div>
       )}
     </div>
   );
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+
+function App() {
+  const [key, setKey] = useState<string>(getStoredKey);
+  const [role, setRole] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // If key already stored, fetch role on mount
+  useEffect(() => {
+    if (!key) return;
+    setLoading(true);
+    apiClient.get<{ role: string }>('/api/auth/me')
+      .then((me) => setRole(me.role))
+      .catch(() => {
+        localStorage.removeItem('openclaw_key');
+        setKey('');
+      })
+      .finally(() => setLoading(false));
+  }, [key]);
+
+  const handleConnect = (newKey: string) => {
+    setKey(newKey);
+    apiClient.get<{ role: string }>('/api/auth/me')
+      .then((me) => setRole(me.role))
+      .catch(() => { /* handled in login screen */ });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('openclaw_key');
+    setKey('');
+    setRole(null);
+    wsClient.disconnect();
+  };
+
+  if (!key || (!role && !loading)) {
+    return <KeyLoginScreen onConnect={handleConnect} />;
+  }
+
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        width: '100vw', height: '100vh', background: '#0a0a1a', color: '#4a9eff',
+        fontSize: 16, fontFamily: 'system-ui, sans-serif',
+      }}>
+        正在验证身份…
+      </div>
+    );
+  }
+
+  if (role === 'Admin') {
+    return <AdminGameView onLogout={handleLogout} />;
+  }
+
+  return <GameView />;
 }
 
 export default App;

@@ -50,6 +50,7 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
 
   private contestants = new Map<string, ContestantState>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private wanderTimer: ReturnType<typeof setInterval> | null = null;
   private pendingEnergyRetries = new Set<string>();
 
   // -------------------------------------------------------------------------
@@ -154,12 +155,20 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
   private ensureTimer(): void {
     if (this.timer !== null) return;
     this.timer = setInterval(() => this.tick(), this.config.interval * 1000);
+    // 独立的随机漫步timer，每3秒触发一次
+    if (this.wanderTimer === null) {
+      this.wanderTimer = setInterval(() => this.wanderTick(), 3000);
+    }
   }
 
   private stopTimer(): void {
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.wanderTimer !== null) {
+      clearInterval(this.wanderTimer);
+      this.wanderTimer = null;
     }
   }
 
@@ -202,6 +211,18 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
       // Requirements: 11.6
       if (prevStatus !== 'offline') {
         this.applyRestZoneEnergyRegen(contestantId);
+      }
+    }
+  }
+
+  /**
+   * 独立的漫步tick，每3秒触发一次
+   * 遍历所有在线选手，30%概率随机移动
+   */
+  private wanderTick(): void {
+    for (const [contestantId, state] of this.contestants) {
+      if (state.status !== 'offline' && state.status !== 'timeout') {
+        this.tryRandomWander(contestantId);
       }
     }
   }
@@ -256,6 +277,52 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
         this.pendingEnergyRetries.add(contestantId);
       }
     }
+
+  /**
+   * 随机探索移动：30%概率在当前位置周围100x100范围内随机移动
+   * 移动后广播位置更新给所有客户端
+   */
+  private tryRandomWander(contestantId: string): void {
+    if (Math.random() > 0.3) return; // 70%概率不移动
+
+    try {
+      const pos = db.prepare(
+        'SELECT position_x, position_y, current_zone_id FROM contestants WHERE id = ?',
+      ).get(contestantId) as { position_x: number; position_y: number; current_zone_id: string } | undefined;
+
+      if (!pos) return;
+
+      const mapDims = worldManager.getMapDimensions();
+      const margin = 20; // 不要贴边
+
+      // 在周围100x100范围内随机偏移
+      const dx = (Math.random() * 2 - 1) * 50;
+      const dy = (Math.random() * 2 - 1) * 50;
+      const newX = Math.max(margin, Math.min(mapDims.width - margin, pos.position_x + dx));
+      const newY = Math.max(margin, Math.min(mapDims.height - margin, pos.position_y + dy));
+
+      // 更新数据库
+      db.prepare(
+        'UPDATE contestants SET position_x = ?, position_y = ? WHERE id = ?',
+      ).run(newX, newY, contestantId);
+
+      // 广播位置更新
+      broadcast(
+        {
+          type: 'contestant.move',
+          payload: {
+            id: contestantId,
+            position: { x: newX, y: newY },
+            zone: pos.current_zone_id,
+          },
+          timestamp: Date.now(),
+        },
+      );
+    } catch (err: unknown) {
+      // 移动失败不影响心跳流程
+      console.error('[HeartbeatMonitor] random wander error:', err);
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Side effects

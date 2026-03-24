@@ -233,6 +233,7 @@ export type EventType =
   | 'heartbeat.timeout'
   | 'heartbeat.offline'
   | 'doc.update'
+  | 'phase.switched'
   | 'system';
 
 export interface PlatformEvent {
@@ -244,29 +245,12 @@ export interface PlatformEvent {
 }
 
 // -----------------------------------------------------------------------------
-// Multi-Room Collision System
+// Collision System
 // -----------------------------------------------------------------------------
-
-export type RoomType = 'MainHall' | 'PrivateRoom';
-
-export interface Room {
-  id: string;
-  name: string;
-  type: RoomType;
-  capacity: number;
-  bounds?: {
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-  };
-  createdAt: string;
-  updatedAt: string;
-}
 
 export interface Wall {
   id: string;
-  roomId: string;
+  zoneId: string;
   x: number;
   y: number;
   width: number;
@@ -275,56 +259,25 @@ export interface Wall {
   createdAt: string;
 }
 
+export interface Obstacle {
+  id: string;
+  zoneId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  type: 'rock' | 'tree' | 'crate' | 'generic';
+  createdAt: string;
+}
+
 export interface SpawnPoint {
   id: string;
-  roomId: string;
+  zoneId: string;
   x: number;
   y: number;
   isAvailable: boolean;
   createdAt: string;
-}
-
-export interface RoomConfig {
-  id: string;
-  roomId: string;
-  configJson: string;
-  version: number;
-  createdAt: string;
-}
-
-export interface RoomBot {
-  id: string;
-  roomId: string;
-  botId: string;
-  positionX: number | null;
-  positionY: number | null;
-  joinedAt: string;
-}
-
-export interface Doorway {
-  id: string;
-  roomAId: string;
-  roomBId: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  createdAt: string;
-}
-
-export interface DoorwayConfig {
-  roomAId: string;
-  roomBId: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface MembershipChange {
-  botId: string;
-  previousRoomId: string | null;
-  newRoomId: string | null;
 }
 
 // -----------------------------------------------------------------------------
@@ -393,6 +346,8 @@ export interface IWorldManager {
   deleteZone(zoneId: string): Promise<void>;
   createZoneType(zoneType: Omit<ZoneType, 'id'>): Promise<ZoneType>;
   updateZoneRule(zoneTypeId: string, rule: ZoneRule): Promise<void>;
+  getZoneWalls(zoneId: string): Wall[];
+  getZoneObstacles(zoneId: string): Obstacle[];
 }
 
 // --- CoreAPIHandler ---
@@ -496,4 +451,45 @@ export interface EventFilter {
 export interface IEventLogger {
   log(event: Omit<PlatformEvent, 'id' | 'timestamp'>): Promise<void>;
   query(filter: EventFilter): Promise<{ events: PlatformEvent[]; total: number }>;
+}
+
+// -----------------------------------------------------------------------------
+// Location State System
+// -----------------------------------------------------------------------------
+
+export type LocationState = 'lobby' | `room_${number}`;
+
+export interface AgentLocationState {
+  contestantId: string;
+  locationState: LocationState;
+  slot: Position;
+  slotIndex: number;
+}
+
+export interface Invitation {
+  id: string;
+  inviterId: string;
+  inviteeId: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'expired';
+  roomId?: number;
+  createdAt: number;
+  expiresAt: number;
+  respondedAt?: number;
+}
+
+export interface PhaseConfig {
+  phaseId: string;
+  phaseName: string;
+  phasePrompt: string;
+  skillDocNames: string[];
+}
+
+export interface ArchivedMessage {
+  id: string;
+  type: 'broadcast' | 'private';
+  senderId: string;
+  receiverId?: string;
+  roomId?: number;
+  content: string;
+  timestamp: number;
 }

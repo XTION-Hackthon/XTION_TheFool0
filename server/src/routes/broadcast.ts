@@ -5,7 +5,9 @@
 // =============================================================================
 
 import { Router, type Request, type Response } from 'express';
+import { randomUUID } from 'crypto';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
+import { db } from '../db';
 import type { ErrorResponse } from '../types';
 
 export const broadcastRouter = Router();
@@ -41,6 +43,12 @@ broadcastRouter.post('/', async (req: Request, res: Response): Promise<void> => 
       senderId: contestantId,
       message,
     });
+
+    // Archive broadcast message to messages table
+    db.prepare(
+      `INSERT INTO messages (id, type, sender_id, content, timestamp)
+       VALUES (?, 'broadcast', ?, ?, ?)`
+    ).run(randomUUID(), contestantId, message, result.timestamp);
 
     res.status(200).json({
       messageId: result.messageId,

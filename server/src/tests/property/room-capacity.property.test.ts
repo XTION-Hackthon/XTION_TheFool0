@@ -1,194 +1,103 @@
 // =============================================================================
-// XTION_TheFool0 — 房间容量约束属性测试
-// Feature: multi-room-collision-system
-// Requirements: 2
+// XTION_TheFool0 — 房间容量上限属性测试
+// Feature: location-state-system
+// Property 2: 任意时刻，任意房间的占用人数 ≤ 2
+// Validates: Requirements 7.1, 7.3
 // =============================================================================
 
-import { describe, it, beforeEach } from 'vitest';
-import { expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import fc from 'fast-check';
+import { LocationManagerClass, ROOM_SLOTS } from '../../modules/location-manager.js';
 
 // =============================================================================
-// In-memory RoomCapacityManager for property testing
-// Models the capacity enforcement logic from room-manager.ts
+// Helpers
 // =============================================================================
 
-type RoomType = 'MainHall' | 'PrivateRoom';
-
-const PRIVATE_ROOM_CAPACITY = 2;
-const MAIN_HALL_CAPACITY = Infinity;
-
-interface RoomState {
-  id: string;
-  type: RoomType;
-  capacity: number;
-  bots: Set<string>;
+/** Count non-null slots in a room occupancy record */
+function countOccupants(occupancy: { slotA: string | null; slotB: string | null }): number {
+  return (occupancy.slotA !== null ? 1 : 0) + (occupancy.slotB !== null ? 1 : 0);
 }
 
-class InMemoryRoomCapacityManager {
-  private rooms: Map<string, RoomState> = new Map();
-
-  createRoom(id: string, type: RoomType, capacity?: number): void {
-    const cap = capacity ?? (type === 'PrivateRoom' ? PRIVATE_ROOM_CAPACITY : MAIN_HALL_CAPACITY);
-    this.rooms.set(id, { id, type, capacity: cap, bots: new Set() });
-  }
-
-  canJoin(roomId: string): boolean {
-    const room = this.rooms.get(roomId);
-    if (!room) throw new Error(`Room not found: ${roomId}`);
-    if (room.type === 'MainHall') return true;
-    return room.bots.size < room.capacity;
-  }
-
-  addBot(roomId: string, botId: string): { success: boolean; error?: string } {
-    const room = this.rooms.get(roomId);
-    if (!room) throw new Error(`Room not found: ${roomId}`);
-
-    if (!this.canJoin(roomId)) {
-      return { success: false, error: 'Room is at capacity' };
-    }
-
-    room.bots.add(botId);
-    return { success: true };
-  }
-
-  removeBot(roomId: string, botId: string): void {
-    const room = this.rooms.get(roomId);
-    if (!room) throw new Error(`Room not found: ${roomId}`);
-    room.bots.delete(botId);
-  }
-
-  getCount(roomId: string): number {
-    return this.rooms.get(roomId)?.bots.size ?? 0;
-  }
-
-  getCapacity(roomId: string): number {
-    return this.rooms.get(roomId)?.capacity ?? 0;
-  }
-}
+/** Valid room IDs */
+const ROOM_IDS = Object.keys(ROOM_SLOTS).map(Number);
 
 // =============================================================================
-// Property 4: 房间容量约束
-// Requirements: 2
+// Property 2: 房间容量上限
+// Validates: Requirements 7.1, 7.3
 // =============================================================================
 
-describe('Property 4: 房间容量约束', () => {
-  let mgr: InMemoryRoomCapacityManager;
+describe('Property 2: 房间容量上限', () => {
+  let manager: LocationManagerClass;
 
   beforeEach(() => {
-    mgr = new InMemoryRoomCapacityManager();
+    manager = new LocationManagerClass();
   });
 
-  it('私聊房间的bot数量永远不超过容量限制(2)', () => {
+  it('enterRoom 后，房间占用人数恰好为 2', () => {
+    // **Validates: Requirements 7.1**
     fc.assert(
       fc.property(
-        // Generate a sequence of unique bot IDs to add
-        fc.array(fc.uuid(), { minLength: 1, maxLength: 20 }),
-        (botIds) => {
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('private-1', 'PrivateRoom');
+        fc.integer({ min: 1, max: 8 }),
+        (roomId) => {
+          const mgr = new LocationManagerClass();
+          mgr.assignLobbySlot('inviter');
+          mgr.assignLobbySlot('invitee');
 
-          for (const botId of botIds) {
-            m.addBot('private-1', botId);
-            // Invariant: count must never exceed capacity
-            if (m.getCount('private-1') > PRIVATE_ROOM_CAPACITY) return false;
-          }
-          return true;
-        },
-      ),
-      { numRuns: 200 },
-    );
-  });
+          mgr.enterRoom('inviter', 'invitee', roomId);
 
-  it('私聊房间满员后，新bot加入请求被拒绝', () => {
-    fc.assert(
-      fc.property(
-        fc.uuid(),
-        fc.uuid(),
-        fc.uuid(),
-        (bot1, bot2, bot3) => {
-          fc.pre(bot1 !== bot2 && bot2 !== bot3 && bot1 !== bot3);
-
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('private-2', 'PrivateRoom');
-
-          m.addBot('private-2', bot1);
-          m.addBot('private-2', bot2);
-
-          // Room is now full (2/2)
-          const result = m.addBot('private-2', bot3);
-          return result.success === false && result.error !== undefined;
-        },
-      ),
-      { numRuns: 200 },
-    );
-  });
-
-  it('bot离开后，房间重新可加入', () => {
-    fc.assert(
-      fc.property(
-        fc.uuid(),
-        fc.uuid(),
-        fc.uuid(),
-        (bot1, bot2, bot3) => {
-          fc.pre(bot1 !== bot2 && bot2 !== bot3 && bot1 !== bot3);
-
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('private-3', 'PrivateRoom');
-
-          m.addBot('private-3', bot1);
-          m.addBot('private-3', bot2);
-
-          // Full — bot3 cannot join
-          const blocked = m.addBot('private-3', bot3);
-          if (blocked.success) return false;
-
-          // bot1 leaves
-          m.removeBot('private-3', bot1);
-
-          // Now bot3 can join
-          const allowed = m.addBot('private-3', bot3);
-          return allowed.success === true && m.getCount('private-3') <= PRIVATE_ROOM_CAPACITY;
-        },
-      ),
-      { numRuns: 200 },
-    );
-  });
-
-  it('主大厅允许任意数量的bot加入', () => {
-    fc.assert(
-      fc.property(
-        fc.array(fc.uuid(), { minLength: 1, maxLength: 100 }),
-        (botIds) => {
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('main-hall', 'MainHall');
-
-          const uniqueBots = [...new Set(botIds)];
-          for (const botId of uniqueBots) {
-            const result = m.addBot('main-hall', botId);
-            if (!result.success) return false;
-          }
-          return m.getCount('main-hall') === uniqueBots.length;
+          const occupancy = mgr.getRoomOccupancy(roomId);
+          return countOccupants(occupancy) === 2;
         },
       ),
       { numRuns: 100 },
     );
   });
 
-  it('canJoin 与实际加入结果一致（无竞态）', () => {
+  it('任意操作序列后，每个房间占用人数始终 ≤ 2', () => {
+    // **Validates: Requirements 7.1**
+    // Generate a sequence of enter/leave operations
+    const enterOp = fc.record({
+      type: fc.constant('enter' as const),
+      inviterId: fc.string({ minLength: 4, maxLength: 12 }).filter(s => s.trim().length > 0),
+      inviteeId: fc.string({ minLength: 4, maxLength: 12 }).filter(s => s.trim().length > 0),
+      roomId: fc.integer({ min: 1, max: 8 }),
+    });
+
     fc.assert(
       fc.property(
-        fc.array(fc.uuid(), { minLength: 1, maxLength: 10 }),
-        (botIds) => {
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('private-4', 'PrivateRoom');
+        fc.array(enterOp, { minLength: 1, maxLength: 8 }),
+        (ops) => {
+          const mgr = new LocationManagerClass();
+          const usedAgents = new Set<string>();
 
-          const unique = [...new Set(botIds)];
-          for (const botId of unique) {
-            const canJoin = m.canJoin('private-4');
-            const result = m.addBot('private-4', botId);
-            // canJoin prediction must match actual result
-            if (canJoin !== result.success) return false;
+          for (const op of ops) {
+            if (op.inviterId === op.inviteeId) continue;
+            if (usedAgents.has(op.inviterId) || usedAgents.has(op.inviteeId)) continue;
+
+            // Assign lobby slots first
+            try {
+              mgr.assignLobbySlot(op.inviterId);
+              mgr.assignLobbySlot(op.inviteeId);
+            } catch {
+              break; // lobby full
+            }
+
+            // Try to enter room (may fail if room already occupied)
+            try {
+              mgr.enterRoom(op.inviterId, op.inviteeId, op.roomId);
+              usedAgents.add(op.inviterId);
+              usedAgents.add(op.inviteeId);
+            } catch {
+              // Room may be occupied — that's fine, just skip
+              mgr.releaseSlot(op.inviterId);
+              mgr.releaseSlot(op.inviteeId);
+            }
+
+            // After every operation, verify all rooms have ≤ 2 occupants
+            for (const rId of ROOM_IDS) {
+              const occupancy = mgr.getRoomOccupancy(rId);
+              if (countOccupants(occupancy) > 2) return false;
+            }
           }
           return true;
         },
@@ -197,37 +106,70 @@ describe('Property 4: 房间容量约束', () => {
     );
   });
 
-  it('私聊房间容量约束在任意加入/离开序列下保持不变', () => {
+  it('leaveRoom 后，房间对应槽位变为 null', () => {
+    // **Validates: Requirements 5.3**
     fc.assert(
       fc.property(
-        // Commands: true = add, false = remove
-        fc.array(
-          fc.record({ add: fc.boolean(), botId: fc.uuid() }),
-          { minLength: 1, maxLength: 50 },
-        ),
-        (commands) => {
-          const m = new InMemoryRoomCapacityManager();
-          m.createRoom('private-5', 'PrivateRoom');
-          const inRoom = new Set<string>();
+        fc.integer({ min: 1, max: 8 }),
+        fc.boolean(),
+        (roomId, inviterLeaves) => {
+          const mgr = new LocationManagerClass();
+          mgr.assignLobbySlot('inviter');
+          mgr.assignLobbySlot('invitee');
+          mgr.enterRoom('inviter', 'invitee', roomId);
 
-          for (const cmd of commands) {
-            if (cmd.add) {
-              const result = m.addBot('private-5', cmd.botId);
-              if (result.success) inRoom.add(cmd.botId);
-            } else {
-              if (inRoom.has(cmd.botId)) {
-                m.removeBot('private-5', cmd.botId);
-                inRoom.delete(cmd.botId);
-              }
-            }
+          const leavingAgent = inviterLeaves ? 'inviter' : 'invitee';
+          mgr.leaveRoom(leavingAgent);
 
-            // Invariant must hold after every operation
-            if (m.getCount('private-5') > PRIVATE_ROOM_CAPACITY) return false;
-          }
-          return true;
+          const occupancy = mgr.getRoomOccupancy(roomId);
+          const count = countOccupants(occupancy);
+          // After one agent leaves, room should have exactly 1 occupant
+          return count === 1;
         },
       ),
-      { numRuns: 200 },
+      { numRuns: 100 },
     );
+  });
+
+  it('findFreeRoom() 仅在所有 8 个房间都被占用时返回 null', () => {
+    // **Validates: Requirements 3.7, 3.8**
+    const mgr = new LocationManagerClass();
+
+    // Initially all rooms are free
+    expect(mgr.findFreeRoom()).not.toBeNull();
+
+    // Fill all 8 rooms
+    for (let roomId = 1; roomId <= 8; roomId++) {
+      mgr.assignLobbySlot(`inviter-${roomId}`);
+      mgr.assignLobbySlot(`invitee-${roomId}`);
+      mgr.enterRoom(`inviter-${roomId}`, `invitee-${roomId}`, roomId);
+    }
+
+    // Now all rooms are full
+    expect(mgr.findFreeRoom()).toBeNull();
+
+    // After one agent leaves, a room becomes available again
+    mgr.leaveRoom('inviter-1');
+    // Room 1 now has only 1 occupant — not fully free (slotA is null but slotB is not)
+    // findFreeRoom only returns rooms where BOTH slots are null
+    expect(mgr.findFreeRoom()).toBeNull();
+
+    // After both agents leave room 1
+    mgr.leaveRoom('invitee-1');
+    expect(mgr.findFreeRoom()).toBe(1);
+  });
+
+  it('enterRoom 对无效房间 ID 抛出 INVALID_ROOM 错误', () => {
+    // **Validates: Requirements 7.3**
+    const mgr = new LocationManagerClass();
+    mgr.assignLobbySlot('inviter');
+    mgr.assignLobbySlot('invitee');
+
+    expect(() => mgr.enterRoom('inviter', 'invitee', 99)).toThrow();
+    try {
+      mgr.enterRoom('inviter', 'invitee', 0);
+    } catch (err: unknown) {
+      expect((err as { code?: string }).code).toBe('INVALID_ROOM');
+    }
   });
 });

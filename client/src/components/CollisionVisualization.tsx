@@ -1,18 +1,17 @@
 /**
- * CollisionVisualization — SVG overlay showing collision boxes, walls, and collision events.
+ * CollisionVisualization — SVG overlay showing collision boxes, walls, obstacles, and collision events.
  * Requirements: 3, 4, 5
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useCollisionStore } from '../stores/collisionStore';
-import { useRoomStore } from '../stores/roomStore';
+import { useZoneStore } from '../stores/zoneStore';
 
-const BOT_BOX_SIZE = 32;
+const BOT_BOX_SIZE = 20;
 const FLASH_DURATION_MS = 1000;
 const MAX_EVENT_LIST = 5;
 
 interface CollisionVisualizationProps {
-  roomId: string;
   width: number;
   height: number;
 }
@@ -24,8 +23,9 @@ interface FlashEvent {
   expiresAt: number;
 }
 
-export function CollisionVisualization({ roomId, width, height }: CollisionVisualizationProps) {
-  const room = useRoomStore((s) => s.rooms[roomId]);
+export function CollisionVisualization({ width, height }: CollisionVisualizationProps) {
+  const walls = useZoneStore((s) => s.walls);
+  const obstacles = useZoneStore((s) => s.obstacles);
   const collisions = useCollisionStore((s) => s.collisions);
 
   const [flashes, setFlashes] = useState<FlashEvent[]>([]);
@@ -33,14 +33,10 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
 
   // Track new collision events and create flash highlights
   useEffect(() => {
-    const roomEvents = collisions.filter(
-      (e) => e.botId && room?.bots.some((b) => b.id === e.botId),
-    );
-
     const now = Date.now();
     const newFlashes: FlashEvent[] = [];
 
-    for (const event of roomEvents) {
+    for (const event of collisions) {
       const key = `${event.botId}-${event.timestamp}`;
       if (!seenEventIds.current.has(key)) {
         seenEventIds.current.add(key);
@@ -54,9 +50,8 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
     }
 
     if (newFlashes.length === 0) return;
-
     setFlashes((prev) => [...prev, ...newFlashes]);
-  }, [collisions, room?.bots]);
+  }, [collisions]);
 
   // Remove expired flashes
   useEffect(() => {
@@ -70,13 +65,7 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
     return () => clearTimeout(timer);
   }, [flashes]);
 
-  if (!room) return null;
-
-  const bots = room.bots;
-  const walls = room.walls;
-  const recentEvents = collisions
-    .filter((e) => room.bots.some((b) => b.id === e.botId))
-    .slice(0, MAX_EVENT_LIST);
+  const recentEvents = collisions.slice(0, MAX_EVENT_LIST);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -91,7 +80,7 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
           borderRadius: 4,
         }}
       >
-        {/* Walls — semi-transparent red rectangles */}
+        {/* Walls */}
         {walls.map((wall) => (
           <rect
             key={wall.id}
@@ -106,7 +95,21 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
           />
         ))}
 
-        {/* Collision flash highlights — yellow at collision position */}
+        {/* Obstacles */}
+        {obstacles.map((obs) => (
+          <rect
+            key={obs.id}
+            x={obs.x}
+            y={obs.y}
+            width={obs.width}
+            height={obs.height}
+            fill="rgba(180, 120, 40, 0.45)"
+            stroke="rgba(220, 160, 60, 0.85)"
+            strokeWidth={1.5}
+          />
+        ))}
+
+        {/* Collision flash highlights */}
         {flashes.map((flash) => (
           <circle
             key={flash.id}
@@ -118,38 +121,6 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
             strokeWidth={2}
             style={{ animation: `cvFlash ${FLASH_DURATION_MS}ms ease-out forwards` }}
           />
-        ))}
-
-        {/* Bot collision boxes — semi-transparent blue rectangles (32x32) centered on bot */}
-        {bots.map((bot) => {
-          const bw = bot.collisionBox?.width ?? BOT_BOX_SIZE;
-          const bh = bot.collisionBox?.height ?? BOT_BOX_SIZE;
-          return (
-            <rect
-              key={bot.id}
-              x={bot.position.x - bw / 2}
-              y={bot.position.y - bh / 2}
-              width={bw}
-              height={bh}
-              fill="rgba(50, 120, 220, 0.3)"
-              stroke="rgba(80, 160, 255, 0.85)"
-              strokeWidth={1.5}
-            />
-          );
-        })}
-
-        {/* Bot labels */}
-        {bots.map((bot) => (
-          <text
-            key={`label-${bot.id}`}
-            x={bot.position.x}
-            y={bot.position.y - BOT_BOX_SIZE / 2 - 4}
-            textAnchor="middle"
-            fill="rgba(180, 220, 255, 0.9)"
-            fontSize={10}
-          >
-            {bot.name ?? bot.id.slice(0, 6)}
-          </text>
         ))}
       </svg>
 
@@ -167,8 +138,6 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
             Recent Collisions
           </div>
           {recentEvents.map((event, i) => {
-            const bot = room.bots.find((b) => b.id === event.botId);
-            const label = bot?.name ?? event.botId.slice(0, 8);
             const typeLabel = event.type === 'bot-bot' ? '🤖↔🤖' : '🤖↔🧱';
             const time = new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             return (
@@ -184,7 +153,7 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
                 }}
               >
                 <span>{typeLabel}</span>
-                <span style={{ color: 'rgba(140, 190, 255, 0.9)', flex: 1 }}>{label}</span>
+                <span style={{ color: 'rgba(140, 190, 255, 0.9)', flex: 1 }}>{event.botId.slice(0, 8)}</span>
                 <span style={{ color: 'rgba(160, 160, 200, 0.7)' }}>
                   ({Math.round(event.position.x)}, {Math.round(event.position.y)})
                 </span>
@@ -195,11 +164,10 @@ export function CollisionVisualization({ roomId, width, height }: CollisionVisua
         </div>
       )}
 
-      {/* CSS keyframe for flash animation */}
       <style>{`
         @keyframes cvFlash {
-          0%   { opacity: 0.9; r: ${BOT_BOX_SIZE}; }
-          100% { opacity: 0; r: ${BOT_BOX_SIZE * 2}; }
+          0%   { opacity: 0.9; }
+          100% { opacity: 0; }
         }
       `}</style>
     </div>

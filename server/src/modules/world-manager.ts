@@ -14,6 +14,8 @@ import type {
   ZoneType,
   ZoneRule,
   AttributeEffect,
+  Wall,
+  Obstacle,
 } from '../types';
 
 // =============================================================================
@@ -425,8 +427,8 @@ class WorldManager implements IWorldManager {
     `).get() as { width: number | null; height: number | null };
 
     return {
-      width: result.width ?? 1000,
-      height: result.height ?? 800,
+      width: result.width ?? 1800,
+      height: result.height ?? 1000,
     };
   }
 
@@ -485,6 +487,45 @@ class WorldManager implements IWorldManager {
   getZoneById(zoneId: string): Zone | null {
     const row = db.prepare('SELECT * FROM zones WHERE id = ?').get(zoneId) as ZoneRow | undefined;
     return row ? rowToZone(row) : null;
+  }
+
+  /**
+   * 获取指定 Zone 内的所有 Wall
+   */
+  getZoneWalls(zoneId: string): Wall[] {
+    const rows = db.prepare('SELECT * FROM walls WHERE zone_id = ?').all(zoneId) as Array<{
+      id: string; zone_id: string; x: number; y: number; width: number; height: number; rotation: number; created_at: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      zoneId: r.zone_id,
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      rotation: r.rotation,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * 获取指定 Zone 内的所有 Obstacle
+   */
+  getZoneObstacles(zoneId: string): Obstacle[] {
+    const rows = db.prepare('SELECT * FROM obstacles WHERE zone_id = ?').all(zoneId) as Array<{
+      id: string; zone_id: string; x: number; y: number; width: number; height: number; rotation: number; type: string; created_at: string;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      zoneId: r.zone_id,
+      x: r.x,
+      y: r.y,
+      width: r.width,
+      height: r.height,
+      rotation: r.rotation,
+      type: r.type as Obstacle['type'],
+      createdAt: r.created_at,
+    }));
   }
 }
 

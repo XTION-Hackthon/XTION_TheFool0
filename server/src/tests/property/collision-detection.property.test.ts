@@ -1,25 +1,19 @@
 // =============================================================================
 // XTION_TheFool0 — 碰撞检测完整性属性测试
-// Feature: multi-room-collision-system
+// Feature: zone-obstacle-system, Property 1: 服务端碰撞验证使用 zoneId
 // Requirements: 3, 4, 5
 // =============================================================================
 
 import { describe, it, beforeEach } from 'vitest';
 import { expect } from 'vitest';
 import fc from 'fast-check';
-import Database from 'better-sqlite3';
 
 // =============================================================================
 // In-memory test helpers — mirror the real AABB logic without DB coupling
 // =============================================================================
 
-const BOT_SIZE = { width: 32, height: 32 };
+const BOT_SIZE = { width: 20, height: 20 };
 
-/**
- * Pure AABB overlap check (center-based), mirroring collision-manager.ts.
- * Two boxes overlap when the distance between centers is less than the sum
- * of their half-extents on both axes.
- */
 function aabbOverlap(
   ax: number, ay: number, aw: number, ah: number,
   bx: number, by: number, bw: number, bh: number,
@@ -32,27 +26,32 @@ function aabbOverlap(
 
 // =============================================================================
 // Minimal in-memory CollisionManager for property testing
-// Decoupled from SQLite so tests are fast and deterministic.
 // =============================================================================
 
 interface BotEntry { botId: string; x: number; y: number }
 interface WallEntry { id: string; x: number; y: number; width: number; height: number }
+interface ObstacleEntry { id: string; x: number; y: number; width: number; height: number }
 
 class InMemoryCollisionManager {
-  private bots: Map<string, BotEntry[]> = new Map();   // roomId -> bots
-  private walls: Map<string, WallEntry[]> = new Map(); // roomId -> walls
+  private bots: Map<string, BotEntry[]> = new Map();       // zoneId -> bots
+  private walls: Map<string, WallEntry[]> = new Map();     // zoneId -> walls
+  private obstacles: Map<string, ObstacleEntry[]> = new Map(); // zoneId -> obstacles
 
-  setBots(roomId: string, bots: BotEntry[]): void {
-    this.bots.set(roomId, bots);
+  setBots(zoneId: string, bots: BotEntry[]): void {
+    this.bots.set(zoneId, bots);
   }
 
-  setWalls(roomId: string, walls: WallEntry[]): void {
-    this.walls.set(roomId, walls);
+  setWalls(zoneId: string, walls: WallEntry[]): void {
+    this.walls.set(zoneId, walls);
   }
 
-  checkBotCollision(roomId: string, movingBotId: string, targetX: number, targetY: number): boolean {
-    const roomBots = this.bots.get(roomId) ?? [];
-    for (const bot of roomBots) {
+  setObstacles(zoneId: string, obstacles: ObstacleEntry[]): void {
+    this.obstacles.set(zoneId, obstacles);
+  }
+
+  checkBotCollision(zoneId: string, movingBotId: string, targetX: number, targetY: number): boolean {
+    const zoneBots = this.bots.get(zoneId) ?? [];
+    for (const bot of zoneBots) {
       if (bot.botId === movingBotId) continue;
       if (aabbOverlap(targetX, targetY, BOT_SIZE.width, BOT_SIZE.height,
                       bot.x, bot.y, BOT_SIZE.width, BOT_SIZE.height)) {
@@ -62,10 +61,9 @@ class InMemoryCollisionManager {
     return false;
   }
 
-  checkWallCollision(roomId: string, targetX: number, targetY: number): boolean {
-    const roomWalls = this.walls.get(roomId) ?? [];
-    for (const wall of roomWalls) {
-      // Wall position is top-left; convert to center for AABB
+  checkWallCollision(zoneId: string, targetX: number, targetY: number): boolean {
+    const zoneWalls = this.walls.get(zoneId) ?? [];
+    for (const wall of zoneWalls) {
       const wallCx = wall.x + wall.width / 2;
       const wallCy = wall.y + wall.height / 2;
       if (aabbOverlap(targetX, targetY, BOT_SIZE.width, BOT_SIZE.height,
@@ -75,19 +73,37 @@ class InMemoryCollisionManager {
     }
     return false;
   }
+
+  checkObstacleCollision(zoneId: string, targetX: number, targetY: number): boolean {
+    const zoneObstacles = this.obstacles.get(zoneId) ?? [];
+    for (const obs of zoneObstacles) {
+      const obsCx = obs.x + obs.width / 2;
+      const obsCy = obs.y + obs.height / 2;
+      if (aabbOverlap(targetX, targetY, BOT_SIZE.width, BOT_SIZE.height,
+                      obsCx, obsCy, obs.width, obs.height)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  validateMovement(zoneId: string, botId: string, targetX: number, targetY: number): { valid: boolean } {
+    if (this.checkBotCollision(zoneId, botId, targetX, targetY)) return { valid: false };
+    if (this.checkWallCollision(zoneId, targetX, targetY)) return { valid: false };
+    if (this.checkObstacleCollision(zoneId, targetX, targetY)) return { valid: false };
+    return { valid: true };
+  }
 }
 
 // =============================================================================
 // Arbitraries
 // =============================================================================
 
-/** A position within a reasonable game-world range */
 const posArb = fc.record({
   x: fc.integer({ min: 0, max: 2000 }),
   y: fc.integer({ min: 0, max: 2000 }),
 });
 
-/** A wall with positive dimensions */
 const wallArb = fc.record({
   id: fc.uuid(),
   x: fc.integer({ min: 0, max: 1900 }),
@@ -96,12 +112,103 @@ const wallArb = fc.record({
   height: fc.integer({ min: 8, max: 128 }),
 });
 
+const obstacleArb = fc.record({
+  id: fc.uuid(),
+  x: fc.integer({ min: 0, max: 1900 }),
+  y: fc.integer({ min: 0, max: 1900 }),
+  width: fc.integer({ min: 8, max: 64 }),
+  height: fc.integer({ min: 8, max: 64 }),
+});
+
 // =============================================================================
-// Property 1: 碰撞检测完整性 — Bot-Bot
+// Property 1: 服务端碰撞验证使用 zoneId
+// Feature: zone-obstacle-system, Property 1
+// Requirements: 3.1, 3.2, 3.3
+// =============================================================================
+
+describe('Property 1: 服务端碰撞验证使用 zoneId', () => {
+  let cm: InMemoryCollisionManager;
+
+  beforeEach(() => {
+    cm = new InMemoryCollisionManager();
+  });
+
+  it('当目标位置与 Obstacle 重叠时，validateMovement 返回 valid: false', () => {
+    // Feature: zone-obstacle-system, Property 1: 服务端碰撞验证使用 zoneId
+    fc.assert(
+      fc.property(
+        obstacleArb,
+        (obs) => {
+          const zoneId = 'zone-main-hall';
+          cm.setObstacles(zoneId, [obs]);
+          cm.setBots(zoneId, []);
+          cm.setWalls(zoneId, []);
+
+          // Place bot center at obstacle center — guaranteed overlap
+          const obsCx = obs.x + obs.width / 2;
+          const obsCy = obs.y + obs.height / 2;
+
+          const result = cm.validateMovement(zoneId, 'bot-1', obsCx, obsCy);
+          return result.valid === false;
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  it('当目标位置与任何碰撞体均不重叠时，validateMovement 返回 valid: true', () => {
+    // Feature: zone-obstacle-system, Property 1: 服务端碰撞验证使用 zoneId
+    fc.assert(
+      fc.property(
+        posArb,
+        (pos) => {
+          const zoneId = 'zone-clear';
+          cm.setObstacles(zoneId, []);
+          cm.setBots(zoneId, []);
+          cm.setWalls(zoneId, []);
+
+          const result = cm.validateMovement(zoneId, 'bot-1', pos.x, pos.y);
+          return result.valid === true;
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  it('不同 zoneId 的碰撞体不影响其他 zone 的检测', () => {
+    // Feature: zone-obstacle-system, Property 1: 服务端碰撞验证使用 zoneId
+    fc.assert(
+      fc.property(
+        obstacleArb,
+        (obs) => {
+          const zoneA = 'zone-a';
+          const zoneB = 'zone-b';
+          cm.setObstacles(zoneA, [obs]);
+          cm.setObstacles(zoneB, []);
+          cm.setBots(zoneA, []);
+          cm.setBots(zoneB, []);
+          cm.setWalls(zoneA, []);
+          cm.setWalls(zoneB, []);
+
+          // Same position in zone-b should not collide (no obstacles there)
+          const obsCx = obs.x + obs.width / 2;
+          const obsCy = obs.y + obs.height / 2;
+
+          const result = cm.validateMovement(zoneB, 'bot-1', obsCx, obsCy);
+          return result.valid === true;
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// =============================================================================
+// Property 2: Bot-Bot 碰撞检测完整性
 // Requirements: 3, 5
 // =============================================================================
 
-describe('Property 1: Bot-Bot 碰撞检测完整性', () => {
+describe('Property 2: Bot-Bot 碰撞检测完整性', () => {
   let cm: InMemoryCollisionManager;
 
   beforeEach(() => {
@@ -112,20 +219,16 @@ describe('Property 1: Bot-Bot 碰撞检测完整性', () => {
     fc.assert(
       fc.property(
         posArb,
-        // offset within overlap zone: strictly less than BOT_SIZE (32px)
-        fc.integer({ min: -31, max: 31 }),
-        fc.integer({ min: -31, max: 31 }),
+        fc.integer({ min: -19, max: 19 }),
+        fc.integer({ min: -19, max: 19 }),
         (posA, dx, dy) => {
-          const roomId = 'room-1';
+          const zoneId = 'zone-1';
           const botA: BotEntry = { botId: 'bot-a', x: posA.x, y: posA.y };
-          // botB is placed so its center overlaps botA's center by (dx, dy)
           const botB: BotEntry = { botId: 'bot-b', x: posA.x + dx, y: posA.y + dy };
 
-          cm.setBots(roomId, [botA, botB]);
+          cm.setBots(zoneId, [botA, botB]);
 
-          // Moving bot-b to its own current position should detect collision with bot-a
-          // (since they overlap)
-          const detected = cm.checkBotCollision(roomId, 'bot-b', botB.x, botB.y);
+          const detected = cm.checkBotCollision(zoneId, 'bot-b', botB.x, botB.y);
           return detected === true;
         },
       ),
@@ -137,17 +240,15 @@ describe('Property 1: Bot-Bot 碰撞检测完整性', () => {
     fc.assert(
       fc.property(
         posArb,
-        // offset strictly outside overlap zone: >= BOT_SIZE (32px) in at least one axis
-        fc.integer({ min: 33, max: 500 }),
+        fc.integer({ min: 21, max: 500 }),
         (posA, gap) => {
-          const roomId = 'room-2';
+          const zoneId = 'zone-2';
           const botA: BotEntry = { botId: 'bot-a', x: posA.x, y: posA.y };
-          // botB is placed gap pixels away on the x-axis — guaranteed no overlap
           const botB: BotEntry = { botId: 'bot-b', x: posA.x + gap, y: posA.y };
 
-          cm.setBots(roomId, [botA, botB]);
+          cm.setBots(zoneId, [botA, botB]);
 
-          const detected = cm.checkBotCollision(roomId, 'bot-b', botB.x, botB.y);
+          const detected = cm.checkBotCollision(zoneId, 'bot-b', botB.x, botB.y);
           return detected === false;
         },
       ),
@@ -160,27 +261,11 @@ describe('Property 1: Bot-Bot 碰撞检测完整性', () => {
       fc.property(
         posArb,
         (pos) => {
-          const roomId = 'room-3';
+          const zoneId = 'zone-3';
           const bot: BotEntry = { botId: 'solo-bot', x: pos.x, y: pos.y };
-          cm.setBots(roomId, [bot]);
+          cm.setBots(zoneId, [bot]);
 
-          // Moving to its own position should NOT be a collision
-          const detected = cm.checkBotCollision(roomId, 'solo-bot', pos.x, pos.y);
-          return detected === false;
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-
-  it('空房间中不存在bot碰撞', () => {
-    fc.assert(
-      fc.property(
-        posArb,
-        (pos) => {
-          const roomId = 'empty-room';
-          cm.setBots(roomId, []);
-          const detected = cm.checkBotCollision(roomId, 'any-bot', pos.x, pos.y);
+          const detected = cm.checkBotCollision(zoneId, 'solo-bot', pos.x, pos.y);
           return detected === false;
         },
       ),
@@ -190,11 +275,11 @@ describe('Property 1: Bot-Bot 碰撞检测完整性', () => {
 });
 
 // =============================================================================
-// Property 2: 墙体碰撞检测完整性
+// Property 3: 墙体碰撞检测完整性
 // Requirements: 4
 // =============================================================================
 
-describe('Property 2: 墙体碰撞检测完整性', () => {
+describe('Property 3: 墙体碰撞检测完整性', () => {
   let cm: InMemoryCollisionManager;
 
   beforeEach(() => {
@@ -206,14 +291,13 @@ describe('Property 2: 墙体碰撞检测完整性', () => {
       fc.property(
         wallArb,
         (wall) => {
-          const roomId = 'wall-room-1';
-          cm.setWalls(roomId, [wall]);
+          const zoneId = 'zone-wall-1';
+          cm.setWalls(zoneId, [wall]);
 
-          // Place bot center exactly at wall center — guaranteed overlap
           const wallCx = wall.x + wall.width / 2;
           const wallCy = wall.y + wall.height / 2;
 
-          const detected = cm.checkWallCollision(roomId, wallCx, wallCy);
+          const detected = cm.checkWallCollision(zoneId, wallCx, wallCy);
           return detected === true;
         },
       ),
@@ -226,33 +310,17 @@ describe('Property 2: 墙体碰撞检测完整性', () => {
       fc.property(
         wallArb,
         (wall) => {
-          const roomId = 'wall-room-2';
-          cm.setWalls(roomId, [wall]);
+          const zoneId = 'zone-wall-2';
+          cm.setWalls(zoneId, [wall]);
 
-          // Place bot far to the right of the wall — guaranteed no overlap
           const clearX = wall.x + wall.width + BOT_SIZE.width + 10;
           const clearY = wall.y + wall.height / 2;
 
-          const detected = cm.checkWallCollision(roomId, clearX, clearY);
+          const detected = cm.checkWallCollision(zoneId, clearX, clearY);
           return detected === false;
         },
       ),
       { numRuns: 200 },
-    );
-  });
-
-  it('没有墙体的房间不应检测到墙体碰撞', () => {
-    fc.assert(
-      fc.property(
-        posArb,
-        (pos) => {
-          const roomId = 'no-walls-room';
-          cm.setWalls(roomId, []);
-          const detected = cm.checkWallCollision(roomId, pos.x, pos.y);
-          return detected === false;
-        },
-      ),
-      { numRuns: 100 },
     );
   });
 

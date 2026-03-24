@@ -20,16 +20,18 @@ db.pragma('foreign_keys = ON');
 
 function createIndexes(): void {
   db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_walls_room_id ON walls(room_id);
-    CREATE INDEX IF NOT EXISTS idx_spawn_points_room_id ON spawn_points(room_id);
-    CREATE INDEX IF NOT EXISTS idx_room_configs_room_id ON room_configs(room_id);
-    CREATE INDEX IF NOT EXISTS idx_room_bots_room_id ON room_bots(room_id);
-    CREATE INDEX IF NOT EXISTS idx_room_bots_bot_id ON room_bots(bot_id);
-    CREATE INDEX IF NOT EXISTS idx_room_configs_room_version ON room_configs(room_id, version);
-    CREATE INDEX IF NOT EXISTS idx_doorways_room_a_id ON doorways(room_a_id);
-    CREATE INDEX IF NOT EXISTS idx_doorways_room_b_id ON doorways(room_b_id);
+    CREATE INDEX IF NOT EXISTS idx_walls_zone_id ON walls(zone_id);
+    CREATE INDEX IF NOT EXISTS idx_spawn_points_zone_id ON spawn_points(zone_id);
+    CREATE INDEX IF NOT EXISTS idx_obstacles_zone_id ON obstacles(zone_id);
+    CREATE INDEX IF NOT EXISTS idx_zone_configs_zone_id ON zone_configs(zone_id);
     CREATE INDEX IF NOT EXISTS idx_contestants_status ON contestants(status);
     CREATE INDEX IF NOT EXISTS idx_contestants_zone ON contestants(current_zone_id);
+    CREATE INDEX IF NOT EXISTS idx_invitations_inviter ON invitations(inviter_id);
+    CREATE INDEX IF NOT EXISTS idx_invitations_invitee ON invitations(invitee_id);
+    CREATE INDEX IF NOT EXISTS idx_invitations_status ON invitations(status);
+    CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
+    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
   `);
 }
 
@@ -175,71 +177,69 @@ function createTables(): void {
       timestamp INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS rooms (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL,
-      capacity INTEGER NOT NULL,
-      bounds_x1 REAL,
-      bounds_y1 REAL,
-      bounds_x2 REAL,
-      bounds_y2 REAL,
-      created_at TIMESTAMP,
-      updated_at TIMESTAMP
-    );
-
     CREATE TABLE IF NOT EXISTS walls (
       id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL,
+      zone_id TEXT NOT NULL,
       x REAL NOT NULL,
       y REAL NOT NULL,
       width REAL NOT NULL,
       height REAL NOT NULL,
       rotation REAL DEFAULT 0,
       created_at TIMESTAMP,
-      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS spawn_points (
       id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL,
+      zone_id TEXT NOT NULL,
       x REAL NOT NULL,
       y REAL NOT NULL,
       is_available BOOLEAN DEFAULT 1,
       created_at TIMESTAMP,
-      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS room_configs (
+    CREATE TABLE IF NOT EXISTS obstacles (
       id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL,
-      config_json TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      created_at TIMESTAMP,
-      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS room_bots (
-      id TEXT PRIMARY KEY,
-      room_id TEXT NOT NULL,
-      bot_id TEXT NOT NULL,
-      position_x REAL,
-      position_y REAL,
-      joined_at TIMESTAMP,
-      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS doorways (
-      id TEXT PRIMARY KEY,
-      room_a_id TEXT NOT NULL,
-      room_b_id TEXT NOT NULL,
+      zone_id TEXT NOT NULL,
       x REAL NOT NULL,
       y REAL NOT NULL,
       width REAL NOT NULL,
       height REAL NOT NULL,
+      rotation REAL DEFAULT 0,
+      type TEXT DEFAULT 'generic',
       created_at TIMESTAMP,
-      FOREIGN KEY (room_a_id) REFERENCES rooms(id) ON DELETE CASCADE,
-      FOREIGN KEY (room_b_id) REFERENCES rooms(id) ON DELETE CASCADE
+      FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS zone_configs (
+      id TEXT PRIMARY KEY,
+      zone_id TEXT NOT NULL,
+      config_json TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      created_at TIMESTAMP,
+      FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS invitations (
+      id TEXT PRIMARY KEY,
+      inviter_id TEXT NOT NULL,
+      invitee_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      room_id INTEGER,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      responded_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      sender_id TEXT NOT NULL,
+      receiver_id TEXT,
+      room_id INTEGER,
+      content TEXT NOT NULL,
+      timestamp INTEGER NOT NULL
     );
   `);
 }
@@ -470,7 +470,7 @@ function seedDefaultZone(): void {
   `).run(
     'zone-main-hall',
     'Main Hall',
-    0, 0, 1000, 800,
+    0, 0, 1800, 1000,
     'zt-social',
     '#e8f4f8',
     '#4a9eca',
@@ -478,6 +478,81 @@ function seedDefaultZone(): void {
     null,
     null,
   );
+}
+
+// =============================================================================
+// Seed: Walls, Obstacles, SpawnPoints
+// =============================================================================
+
+const DEFAULT_WALLS = [
+  // Border walls
+  { id: 'wall-top',    zoneId: 'zone-main-hall', x: 0,    y: 0,   width: 1800, height: 10,   rotation: 0 },
+  { id: 'wall-bottom', zoneId: 'zone-main-hall', x: 0,    y: 990, width: 1800, height: 10,   rotation: 0 },
+  { id: 'wall-left',   zoneId: 'zone-main-hall', x: 0,    y: 0,   width: 10,   height: 1000, rotation: 0 },
+  { id: 'wall-right',  zoneId: 'zone-main-hall', x: 1790, y: 0,   width: 10,   height: 1000, rotation: 0 },
+] as const;
+
+const DEFAULT_OBSTACLES = [
+  // Left rock cluster
+  { id: 'obs-rock-1',  zoneId: 'zone-main-hall', x: 200,  y: 200, width: 40, height: 40, rotation: 0, type: 'rock' },
+  { id: 'obs-rock-2',  zoneId: 'zone-main-hall', x: 260,  y: 220, width: 30, height: 30, rotation: 0, type: 'rock' },
+  // Center trees
+  { id: 'obs-tree-1',  zoneId: 'zone-main-hall', x: 850,  y: 450, width: 30, height: 30, rotation: 0, type: 'tree' },
+  { id: 'obs-tree-2',  zoneId: 'zone-main-hall', x: 900,  y: 500, width: 30, height: 30, rotation: 0, type: 'tree' },
+  // Right crates
+  { id: 'obs-crate-1', zoneId: 'zone-main-hall', x: 1400, y: 400, width: 40, height: 40, rotation: 0, type: 'crate' },
+  { id: 'obs-crate-2', zoneId: 'zone-main-hall', x: 1460, y: 400, width: 40, height: 40, rotation: 0, type: 'crate' },
+] as const;
+
+const DEFAULT_SPAWN_POINTS = [
+  { id: 'spawn-zone-1', zoneId: 'zone-main-hall', x: 600, y: 350 },
+  { id: 'spawn-zone-2', zoneId: 'zone-main-hall', x: 900, y: 400 },
+  { id: 'spawn-zone-3', zoneId: 'zone-main-hall', x: 1200, y: 350 },
+  { id: 'spawn-zone-4', zoneId: 'zone-main-hall', x: 700, y: 600 },
+  { id: 'spawn-zone-5', zoneId: 'zone-main-hall', x: 900, y: 500 },
+  { id: 'spawn-zone-6', zoneId: 'zone-main-hall', x: 1100, y: 600 },
+] as const;
+
+function seedWalls(): void {
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO walls (id, zone_id, x, y, width, height, rotation, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  const seedAll = db.transaction(() => {
+    for (const wall of DEFAULT_WALLS) {
+      insert.run(wall.id, wall.zoneId, wall.x, wall.y, wall.width, wall.height, wall.rotation, now);
+    }
+  });
+  seedAll();
+}
+
+function seedObstacles(): void {
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO obstacles (id, zone_id, x, y, width, height, rotation, type, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date().toISOString();
+  const seedAll = db.transaction(() => {
+    for (const obs of DEFAULT_OBSTACLES) {
+      insert.run(obs.id, obs.zoneId, obs.x, obs.y, obs.width, obs.height, obs.rotation, obs.type, now);
+    }
+  });
+  seedAll();
+}
+
+function seedSpawnPoints(): void {
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO spawn_points (id, zone_id, x, y, is_available, created_at)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `);
+  const now = new Date().toISOString();
+  const seedAll = db.transaction(() => {
+    for (const sp of DEFAULT_SPAWN_POINTS) {
+      insert.run(sp.id, sp.zoneId, sp.x, sp.y, now);
+    }
+  });
+  seedAll();
 }
 
 // =============================================================================
@@ -491,45 +566,14 @@ function migrateAddRoleColumn(): void {
   }
 }
 
-function seedDefaultRoom(): void {
-  const count = (db.prepare('SELECT COUNT(*) as cnt FROM rooms').get() as { cnt: number }).cnt;
-  if (count > 0) return;
-
-  const now = new Date().toISOString();
-  const roomId = 'room-main-hall';
-
-  // Create the default MainHall room
-  db.prepare(`
-    INSERT INTO rooms (id, name, type, capacity, bounds_x1, bounds_y1, bounds_x2, bounds_y2, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(roomId, 'MainHall', 'MainHall', 999999, 0, 0, 1000, 800, now, now);
-
-  // Seed spawn points spread across the MainHall
-  const spawnPoints = [
-    { x: 200, y: 200 },
-    { x: 500, y: 200 },
-    { x: 800, y: 200 },
-    { x: 200, y: 500 },
-    { x: 500, y: 400 },
-    { x: 800, y: 500 },
-  ];
-
-  const insertSpawn = db.prepare(`
-    INSERT INTO spawn_points (id, room_id, x, y, is_available, created_at)
-    VALUES (?, ?, ?, ?, 1, ?)
-  `);
-
-  for (let i = 0; i < spawnPoints.length; i++) {
-    insertSpawn.run(`spawn-main-${i + 1}`, roomId, spawnPoints[i].x, spawnPoints[i].y, now);
-  }
-}
-
 export function initializeDatabase(): void {
   createTables();
-  createIndexes();
   seedBuiltinZoneTypes();
   seedPlatformDocuments();
   seedDefaultZone();
-  seedDefaultRoom();
+  seedWalls();
+  seedObstacles();
+  seedSpawnPoints();
   migrateAddRoleColumn();
+  createIndexes();
 }
