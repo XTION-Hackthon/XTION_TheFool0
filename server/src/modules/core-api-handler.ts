@@ -210,8 +210,12 @@ class CoreAPIHandler implements ICoreAPIHandler {
     };
 
     let recipientCount = 0;
-    for (const ws of connections.values()) {
-      sendEvent(ws, event);
+    for (const [recipientId, ws] of connections) {
+      // isSelf: true when the recipient is the sender — helps Agent avoid self-reply loops
+      sendEvent(ws, {
+        ...event,
+        payload: { ...event.payload as object, isSelf: recipientId === senderId },
+      });
       recipientCount++;
     }
 

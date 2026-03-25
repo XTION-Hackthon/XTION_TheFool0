@@ -233,36 +233,64 @@ statusRouter.get('/world', requireRole('Admin', 'Agent_Player', 'Human_Viewer', 
 
 // ---------------------------------------------------------------------------
 // GET /api/messages — 消息历史（分页）
+// 支持 type=broadcast|talk 过滤，方便 Agent 在发广播前读取上下文
 // Requirements: 8.3
 // ---------------------------------------------------------------------------
 
 statusRouter.get('/messages', (req: Request, res: Response, next: NextFunction) => {
   try {
     const page = req.query['page'] ? parseInt(req.query['page'] as string, 10) : 1;
-    const pageSize = req.query['page_size'] ? parseInt(req.query['page_size'] as string, 10) : 20;
+    const pageSize = Math.min(100, req.query['page_size'] ? parseInt(req.query['page_size'] as string, 10) : 20);
     const offset = (page - 1) * pageSize;
+    const typeFilter = req.query['type'] as string | undefined; // 'broadcast' | 'talk' | undefined
 
-    const talks = db.prepare(
-      'SELECT id, sender_id, receiver_ids, content, zone_id, timestamp, "talk" as type FROM talk_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ).all(pageSize, offset) as Array<{
-      id: string; sender_id: string; receiver_ids: string; content: string;
-      zone_id: string; timestamp: number; type: string;
-    }>;
+    // 查询发送者名字的辅助函数
+    const getSenderName = (senderId: string): string => {
+      const row = db.prepare('SELECT name FROM contestants WHERE id = ?').get(senderId) as { name: string } | undefined;
+      return row?.name ?? senderId.slice(0, 8);
+    };
 
-    const broadcasts = db.prepare(
-      'SELECT id, sender_id, content, timestamp, "broadcast" as type FROM broadcast_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ).all(pageSize, offset) as Array<{
-      id: string; sender_id: string; content: string; timestamp: number; type: string;
-    }>;
+    const includeTalks = !typeFilter || typeFilter === 'talk';
+    const includeBroadcasts = !typeFilter || typeFilter === 'broadcast';
+
+    // Caller's own contestant id for isSelf marking
+    const selfId = req.contestantId ?? '';
+
+    const talks = includeTalks
+      ? (db.prepare(
+          'SELECT id, sender_id, receiver_ids, content, zone_id, timestamp FROM talk_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+        ).all(pageSize, offset) as Array<{
+          id: string; sender_id: string; receiver_ids: string; content: string;
+          zone_id: string; timestamp: number;
+        }>)
+      : [];
+
+    const broadcasts = includeBroadcasts
+      ? (db.prepare(
+          'SELECT id, sender_id, content, timestamp FROM broadcast_messages ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+        ).all(pageSize, offset) as Array<{
+          id: string; sender_id: string; content: string; timestamp: number;
+        }>)
+      : [];
 
     res.json({
       talks: talks.map(t => ({
-        id: t.id, senderId: t.sender_id,
+        id: t.id,
+        senderId: t.sender_id,
+        senderName: getSenderName(t.sender_id),
+        isSelf: t.sender_id === selfId,
         receiverIds: JSON.parse(t.receiver_ids) as string[],
-        content: t.content, zoneId: t.zone_id, timestamp: t.timestamp,
+        content: t.content,
+        zoneId: t.zone_id,
+        timestamp: t.timestamp,
       })),
       broadcasts: broadcasts.map(b => ({
-        id: b.id, senderId: b.sender_id, content: b.content, timestamp: b.timestamp,
+        id: b.id,
+        senderId: b.sender_id,
+        senderName: getSenderName(b.sender_id),
+        isSelf: b.sender_id === selfId,
+        content: b.content,
+        timestamp: b.timestamp,
       })),
       page,
       pageSize,

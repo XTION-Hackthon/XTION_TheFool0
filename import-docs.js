@@ -9,6 +9,7 @@ const docs = [
   { file: 'skills/heartbeat.md', name: 'heartbeat.md' },
   { file: 'skills/messaging.md', name: 'messaging.md' },
   { file: 'skills/rules.md', name: 'rules.md' },
+  { file: 'skills/behavior-loop.md', name: 'behavior-loop.md' },
 ];
 
 console.log('\n📄 导入平台文档到数据库...\n');

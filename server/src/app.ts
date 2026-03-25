@@ -30,6 +30,8 @@ import { leaveRoomRouter } from './routes/leave-room';
 import { adminLocationRouter } from './routes/admin-location';
 import { adminPhaseRouter, currentPhaseRouter } from './routes/admin-phase';
 import { messagesRouter } from './routes/messages';
+import { productRouter } from './routes/product';
+import { hackathonRouter, adminHackathonRouter } from './routes/hackathon';
 import { authMiddleware, requireRole } from './middleware/auth';
 
 export const app = express();
@@ -40,6 +42,20 @@ export const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// Verbose request logger — logs every API request with identity info
+// ---------------------------------------------------------------------------
+
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'] ?? req.headers['x-api-key'] ?? '';
+  const keyHint = typeof authHeader === 'string' && authHeader.length > 8
+    ? `${authHeader.slice(0, 8)}…`
+    : (authHeader || '(none)');
+  const bodyKeys = req.body && typeof req.body === 'object' ? Object.keys(req.body as object).join(',') : '';
+  console.log(`[HTTP] ${req.method} ${req.path} | key=${keyHint} | body={${bodyKeys}}`);
+  next();
+});
 
 // ---------------------------------------------------------------------------
 // Static map assets — serve client/public/maps directly
@@ -57,7 +73,7 @@ const skillsDir = path.join(__dirname, '../../skills');
 
 app.get('/:filename.md', (req: Request, res: Response, next: NextFunction) => {
   const filename = req.params['filename'] as string;
-  const allowedFiles = ['skill', 'heartbeat', 'messaging', 'rules', 'behavior-loop', 'openclaw-quickstart'];
+  const allowedFiles = ['skill', 'heartbeat', 'messaging', 'rules', 'behavior-loop', 'openclaw-quickstart', 'product-collab', 'hackathon-script', 'act1-intro', 'act2-team', 'act3-product'];
   
   if (!allowedFiles.includes(filename)) {
     return next();
@@ -148,6 +164,9 @@ app.use('/api/admin', authMiddleware, requireRole('Admin'), adminLocationRouter)
 app.use('/api/admin', authMiddleware, requireRole('Admin'), adminPhaseRouter);
 app.use('/api', authMiddleware, currentPhaseRouter);
 app.use('/api/admin', authMiddleware, requireRole('Admin'), messagesRouter);
+app.use('/api/product', authMiddleware, productRouter);
+app.use('/api/hackathon', authMiddleware, hackathonRouter);
+app.use('/api/admin', authMiddleware, requireRole('Admin'), adminHackathonRouter);
 
 // ---------------------------------------------------------------------------
 // Unified error handler — { "error": { "code": "...", "message": "..." } }

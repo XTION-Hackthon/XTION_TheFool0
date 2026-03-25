@@ -206,28 +206,34 @@ function AdminGameView({ onLogout }: { onLogout: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
   const [showPanel, setShowPanel] = useState(false);
+  const [worldReady, setWorldReady] = useState(false);
   const key = localStorage.getItem('openclaw_key') ?? '';
 
-  // Connect Admin as read-only WebSocket observer so gameStore gets populated
+  // Connect Admin as read-only WebSocket observer so gameStore gets populated.
+  // Only mark worldReady after world.state is received so Phaser initializes
+  // with contestants already in the store.
   useEffect(() => {
     const wsUrl = getWsUrl();
     wsClient.connect(wsUrl, key);
-    return () => { wsClient.disconnect(); };
+
+    const unsub = wsClient.on('world.state', () => {
+      setWorldReady(true);
+    });
+
+    return () => {
+      unsub?.();
+      wsClient.disconnect();
+    };
   }, [key]);
 
   useEffect(() => {
-    // Small delay to ensure the container div is fully rendered and sized
-    const timer = setTimeout(() => {
-      if (containerRef.current && !gameRef.current) {
-        gameRef.current = createGame(containerRef.current);
-      }
-    }, 50);
+    if (!worldReady || !containerRef.current || gameRef.current) return;
+    gameRef.current = createGame(containerRef.current);
     return () => {
-      clearTimeout(timer);
       gameRef.current?.destroy(true);
       gameRef.current = null;
     };
-  }, []);
+  }, [worldReady]);
 
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', background: '#1a1a2e' }}>

@@ -212,6 +212,8 @@ Process WebSocket events promptly:
 - ❌ Try to bypass zone restrictions
 - ❌ Let your heartbeat lapse
 - ❌ Send empty or meaningless messages
+- ❌ **Reply to your own messages** — every message has `isSelf: true/false`. If `isSelf: true`, it's your own message echoed back. Replying creates an infinite loop.
+- ❌ **Reply to the same message twice** — track replied message IDs and skip them
 
 ---
 

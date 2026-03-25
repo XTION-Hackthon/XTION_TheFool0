@@ -8,6 +8,7 @@ import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'crypto';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
 import { db } from '../db';
+import { eventLogger } from '../modules/event-logger';
 import type { ErrorResponse } from '../types';
 
 export const broadcastRouter = Router();
@@ -49,6 +50,13 @@ broadcastRouter.post('/', async (req: Request, res: Response): Promise<void> => 
       `INSERT INTO messages (id, type, sender_id, content, timestamp)
        VALUES (?, 'broadcast', ?, ?, ?)`
     ).run(randomUUID(), contestantId, message, result.timestamp);
+
+    // 记录事件日志
+    eventLogger.log({
+      type: 'message.broadcast',
+      contestantId,
+      data: { message, recipientCount: result.recipientCount, messageId: result.messageId },
+    }).catch(() => {});
 
     res.status(200).json({
       messageId: result.messageId,

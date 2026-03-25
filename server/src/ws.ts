@@ -436,6 +436,14 @@ async function handleAuth(
   const mapDims = getMapDimensions();
   const onlineContestants = getAllOnlineContestants();
 
+  // Fetch recent broadcast history so Agent can read context before sending
+  const recentBroadcasts = db.prepare(`
+    SELECT bm.id, bm.sender_id, bm.content, bm.timestamp, c.name as sender_name
+    FROM broadcast_messages bm
+    LEFT JOIN contestants c ON c.id = bm.sender_id
+    ORDER BY bm.timestamp DESC LIMIT 20
+  `).all() as Array<{ id: string; sender_id: string; content: string; timestamp: number; sender_name: string | null }>;
+
   const worldStatePayload = {
     map: {
       width: mapDims.width,
@@ -457,6 +465,15 @@ async function handleAuth(
       energy: contestant.energy,
       status: contestant.status,
     },
+    recentBroadcasts: recentBroadcasts.reverse().map((b) => ({
+      id: b.id,
+      senderId: b.sender_id,
+      senderName: b.sender_name ?? b.sender_id.slice(0, 8),
+      content: b.content,
+      timestamp: b.timestamp,
+      // isSelf helps Agent avoid replying to its own messages
+      isSelf: b.sender_id === contestant.id,
+    })),
   };
 
   sendEvent(ws, {
@@ -514,7 +531,9 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
 
   const wss = new WebSocketServer({ server, path: '/ws' });
 
-  wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    const ip = req.socket.remoteAddress ?? 'unknown';
+    console.log(`[WS] new connection from ${ip}`);
     const client: ClientContext = { ws, contestantId: null, role: null };
 
     ws.on('message', (raw) => {
@@ -526,6 +545,8 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
         return;
       }
 
+      console.log(`[WS←client] type=${msg.type} | contestantId=${client.contestantId ?? '(unauthed)'}`);
+
       handleMessage(client, msg, (id) => {
         client.contestantId = id;
         connections.set(id, ws);
@@ -533,6 +554,7 @@ export function setupWebSocket(server: http.Server): WebSocketServer {
     });
 
     ws.on('close', () => {
+      console.log(`[WS] connection closed | contestantId=${client.contestantId ?? '(unauthed)'}`);
       if (client.contestantId) {
         // Task 6.4: Get location state BEFORE releasing (releaseSlot removes the state)
         const locationState = locationManager.getState(client.contestantId);
@@ -660,6 +682,7 @@ export function handleMessage(
 export function sendEvent(ws: WebSocket, event: ServerEvent): void {
   if (ws.readyState === ws.OPEN) {
     try {
+      console.log(`[WS→client] type=${event.type}`);
       ws.send(JSON.stringify(event));
     } catch (err) {
       console.error('[WS] sendEvent error:', err);

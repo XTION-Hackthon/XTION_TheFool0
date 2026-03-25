@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import { coreAPIHandler, APIError } from '../modules/core-api-handler';
 import { db } from '../db';
 import { locationManager } from '../modules/location-manager';
+import { eventLogger } from '../modules/event-logger';
 import type { ErrorResponse } from '../types';
 
 export const talkRouter = Router();
@@ -83,6 +84,13 @@ talkRouter.post('/', async (req: Request, res: Response): Promise<void> => {
       `INSERT INTO messages (id, type, sender_id, receiver_id, room_id, content, timestamp)
        VALUES (?, 'private', ?, ?, ?, ?, ?)`
     ).run(randomUUID(), contestantId, receiverId, roomId, message, result.timestamp);
+
+    // 记录事件日志
+    eventLogger.log({
+      type: 'message.talk',
+      contestantId,
+      data: { targetIds: target_ids, message, roomId, messageId: result.messageId },
+    }).catch(() => {});
 
     res.status(200).json({ messageId: result.messageId, timestamp: result.timestamp });
   } catch (err) {

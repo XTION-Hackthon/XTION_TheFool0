@@ -6,7 +6,6 @@
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { db } from '../db.js';
-import type { ArchivedMessage, ErrorResponse } from '../types/index.js';
 
 export const messagesRouter = Router();
 
@@ -21,6 +20,8 @@ interface MessageRow {
   id: string;
   type: 'broadcast' | 'private';
   sender_id: string;
+  sender_name: string | null;
+  contestant_name: string | null;
   receiver_id: string | null;
   room_id: number | null;
   content: string;
@@ -48,19 +49,19 @@ messagesRouter.get('/messages', (req: Request, res: Response, next: NextFunction
     const params: (string | number)[] = [];
 
     if (type === 'broadcast' || type === 'private') {
-      conditions.push('type = ?');
+      conditions.push('m.type = ?');
       params.push(type);
     }
 
     if (sender_id) {
-      conditions.push('sender_id = ?');
+      conditions.push('m.sender_id = ?');
       params.push(sender_id);
     }
 
     if (from) {
       const fromTs = parseInt(from, 10);
       if (!isNaN(fromTs)) {
-        conditions.push('timestamp >= ?');
+        conditions.push('m.timestamp >= ?');
         params.push(fromTs);
       }
     }
@@ -68,7 +69,7 @@ messagesRouter.get('/messages', (req: Request, res: Response, next: NextFunction
     if (to) {
       const toTs = parseInt(to, 10);
       if (!isNaN(toTs)) {
-        conditions.push('timestamp <= ?');
+        conditions.push('m.timestamp <= ?');
         params.push(toTs);
       }
     }
@@ -77,19 +78,27 @@ messagesRouter.get('/messages', (req: Request, res: Response, next: NextFunction
 
     // Count total matching rows
     const countRow = db.prepare(
-      `SELECT COUNT(*) as cnt FROM messages ${whereClause}`,
+      `SELECT COUNT(*) as cnt FROM messages m
+       LEFT JOIN contestants c ON c.id = m.sender_id
+       LEFT JOIN keys k ON k.id = c.key_id
+       ${whereClause}`,
     ).get(...params) as { cnt: number };
     const total = countRow.cnt;
 
     // Fetch paginated results
     const rows = db.prepare(
-      `SELECT * FROM messages ${whereClause} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+      `SELECT m.*, c.name as sender_name, k.contestant_name
+       FROM messages m
+       LEFT JOIN contestants c ON c.id = m.sender_id
+       LEFT JOIN keys k ON k.id = c.key_id
+       ${whereClause} ORDER BY m.timestamp DESC LIMIT ? OFFSET ?`,
     ).all(...params, pageSizeNum, offset) as MessageRow[];
 
-    const messages: ArchivedMessage[] = rows.map((row) => ({
+    const messages = rows.map((row) => ({
       id: row.id,
       type: row.type,
       senderId: row.sender_id,
+      senderName: row.sender_name ?? row.contestant_name ?? row.sender_id.slice(0, 12),
       ...(row.receiver_id != null ? { receiverId: row.receiver_id } : {}),
       ...(row.room_id != null ? { roomId: row.room_id } : {}),
       content: row.content,

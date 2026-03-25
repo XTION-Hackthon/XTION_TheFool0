@@ -7,6 +7,7 @@
 import { Router, type Request, type Response } from 'express';
 import { heartbeatMonitor } from '../modules/heartbeat-monitor';
 import { requireRole } from '../middleware/auth';
+import { eventLogger } from '../modules/event-logger';
 import type { ErrorResponse, HeartbeatPayload } from '../types';
 
 export const heartbeatRouter = Router();

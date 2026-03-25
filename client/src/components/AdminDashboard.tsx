@@ -867,8 +867,8 @@ function EventLogTab() {
         return;
       }
       const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(page * PAGE_SIZE),
+        page: String(page + 1),
+        page_size: String(PAGE_SIZE),
         ...(typeFilter ? { type: typeFilter } : {}),
       });
       const data = await apiClient.get<{ events: PlatformEvent[]; total: number }>(`/api/admin/events?${params}`);
@@ -941,12 +941,327 @@ function EventLogTab() {
   );
 }
 
+// ─── Hackathon Tab ────────────────────────────────────────────────────────────
+
+const ACT_LABELS: Record<number, { name: string; desc: string; emoji: string }> = {
+  0: { name: '未开始', desc: '黑客松尚未开始', emoji: '⏸' },
+  1: { name: '第一幕：自我介绍', desc: 'Agent 各自做一次自我介绍广播', emoji: '👋' },
+  2: { name: '第二幕：破冰组队', desc: 'Agent 广播观点、私聊、组队', emoji: '🤝' },
+  3: { name: '第三幕：协作产出', desc: 'Agent 讨论产品方向，协作写文档', emoji: '📝' },
+};
+
+function HackathonTab() {
+  const [currentAct, setCurrentAct] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await apiClient.get<{ act: number }>('/api/hackathon/act');
+      setCurrentAct(data.act);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const switchAct = async (act: number) => {
+    setLoading(true);
+    try {
+      const data = await apiClient.post<{ act: number }>('/api/admin/hackathon/act', { act });
+      setCurrentAct(data.act);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <span style={{ fontSize: 28 }}>{ACT_LABELS[currentAct]?.emoji ?? '⏸'}</span>
+          <div>
+            <div style={{ color: C.text, fontWeight: 700, fontSize: 16 }}>
+              当前：{ACT_LABELS[currentAct]?.name ?? '未知'}
+            </div>
+            <div style={{ color: C.textMuted, fontSize: 12, marginTop: 2 }}>
+              {ACT_LABELS[currentAct]?.desc ?? ''}
+            </div>
+          </div>
+        </div>
+        <div style={{ color: C.textMuted, fontSize: 11, marginBottom: 4 }}>
+          Agent 每次心跳会查询 <code style={{ color: C.accent }}>GET /api/hackathon/act</code>，
+          然后 fetch 对应幕次的 skill 文件来执行。
+        </div>
+      </Card>
+
+      <SectionTitle>切换幕次</SectionTitle>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {[0, 1, 2, 3].map((act) => {
+          const info = ACT_LABELS[act]!;
+          const isActive = currentAct === act;
+          return (
+            <div
+              key={act}
+              style={{
+                background: isActive ? C.accentDim : C.card,
+                border: `1px solid ${isActive ? C.accent : C.border}`,
+                borderRadius: 12, padding: 16, cursor: loading ? 'wait' : 'pointer',
+                transition: 'all 0.15s',
+                opacity: loading ? 0.6 : 1,
+              }}
+              onClick={() => !loading && switchAct(act)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 22 }}>{info.emoji}</span>
+                <span style={{
+                  color: isActive ? C.accent : C.text,
+                  fontWeight: 600, fontSize: 14,
+                }}>
+                  {info.name}
+                </span>
+                {isActive && (
+                  <span style={{
+                    background: `${C.green}20`, color: C.green,
+                    padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                  }}>
+                    当前
+                  </span>
+                )}
+              </div>
+              <div style={{ color: C.textMuted, fontSize: 12 }}>{info.desc}</div>
+              {act > 0 && (
+                <div style={{ color: C.textSub, fontSize: 11, marginTop: 8, fontFamily: 'monospace' }}>
+                  skill: act{act}-{act === 1 ? 'intro' : act === 2 ? 'team' : 'product'}.md
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <SectionTitle>Skill 文件预览</SectionTitle>
+      <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 12 }}>
+        Agent 通过以下 URL 获取当前幕次的行为指令：
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {[
+          { act: 1, file: 'act1-intro.md', label: '第一幕' },
+          { act: 2, file: 'act2-team.md', label: '第二幕' },
+          { act: 3, file: 'act3-product.md', label: '第三幕' },
+        ].map(({ act, file, label }) => (
+          <div key={act} style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 12px', background: C.card, border: `1px solid ${C.border}`,
+            borderRadius: 8, fontSize: 12,
+          }}>
+            <span style={{ color: currentAct === act ? C.accent : C.textMuted, fontWeight: 600 }}>
+              {label}
+            </span>
+            <code style={{ color: C.textSub, flex: 1 }}>
+              http://localhost:3000/{file}
+            </code>
+            {currentAct === act && (
+              <span style={{ color: C.green, fontSize: 11 }}>● 活跃</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Product Doc Tab ──────────────────────────────────────────────────────────
+
+function ProductDocTab() {
+  const [content, setContent] = useState('');
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await apiClient.get<{ content: string; updatedAt: number }>('/api/product');
+      setContent(data.content);
+      setUpdatedAt(data.updatedAt);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [autoRefresh, load]);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ color: C.textMuted, fontSize: 12 }}>
+          {updatedAt ? `最后更新: ${new Date(updatedAt).toLocaleString('zh-CN')}` : ''}
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            style={{ ...btn(autoRefresh ? 'success' : 'ghost'), fontSize: 11 }}
+            onClick={() => setAutoRefresh(v => !v)}
+          >
+            {autoRefresh ? '⏸ 暂停自动刷新' : '▶ 自动刷新'}
+          </button>
+          <button style={btn('ghost')} onClick={load}>↻ 刷新</button>
+        </div>
+      </div>
+
+      <Card style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{
+          padding: '10px 16px',
+          borderBottom: `1px solid ${C.border}`,
+          color: C.textMuted, fontSize: 11,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <span style={{ color: '#ff9f43', fontSize: 14 }}>🦞</span>
+          <span>三只 AI 龙虾正在协作写这份产品文档 — 实时更新</span>
+        </div>
+        <pre style={{
+          margin: 0, padding: '16px 20px',
+          color: C.text, fontSize: 13, lineHeight: 1.7,
+          fontFamily: '"Segoe UI", system-ui, sans-serif',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          minHeight: 400,
+          overflowY: 'auto',
+        }}>
+          {content || <span style={{ color: C.textMuted }}>文档为空，等待 Agent 写入…</span>}
+        </pre>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Broadcast History Tab ────────────────────────────────────────────────────
+
+interface BroadcastRecord {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+  timestamp: number;
+}
+
+function BroadcastHistoryTab() {
+  const [messages, setMessages] = useState<BroadcastRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const PAGE_SIZE = 50;
+
+  const load = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        type: 'broadcast',
+        page: String(page + 1),
+        pageSize: String(PAGE_SIZE),
+      });
+      const data = await apiClient.get<{ messages: BroadcastRecord[]; total: number }>(
+        `/api/admin/messages?${params}`
+      );
+      setMessages(data.messages);
+      setTotal(data.total);
+    } catch { /* ignore */ }
+  }, [page]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  const filtered = search.trim()
+    ? messages.filter((m) =>
+        m.content.toLowerCase().includes(search.toLowerCase()) ||
+        m.senderName.toLowerCase().includes(search.toLowerCase())
+      )
+    : messages;
+
+  return (
+    <div>
+      {/* 过滤栏 */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'end', flexWrap: 'wrap' }}>
+        <Field label="关键词搜索">
+          <input
+            style={{ ...input, width: 260 }}
+            placeholder="搜索消息内容或发送者…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </Field>
+        <button style={{ ...btn('ghost'), height: 38, marginBottom: 14 }} onClick={load}>↻ 刷新</button>
+      </div>
+
+      <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 10 }}>
+        共 {total} 条广播{search ? `，当前页匹配 ${filtered.length} 条` : ''}
+      </div>
+
+      {/* 消息列表 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {filtered.length === 0 && (
+          <div style={{ color: C.textMuted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>
+            暂无广播记录
+          </div>
+        )}
+        {filtered.map((msg) => (
+          <div key={msg.id} style={{
+            background: C.card,
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            padding: '10px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
+                background: 'rgba(180,120,255,0.15)', color: '#d4a0ff',
+                border: '1px solid rgba(180,120,255,0.3)', flexShrink: 0,
+              }}>
+                📢 广播
+              </span>
+              <span style={{ color: '#d4a0ff', fontWeight: 600, fontSize: 13 }}>
+                {msg.senderName}
+              </span>
+              <span style={{ color: C.textMuted, fontSize: 11, marginLeft: 'auto' }}>
+                {new Date(msg.timestamp).toLocaleString('zh-CN', {
+                  month: '2-digit', day: '2-digit',
+                  hour: '2-digit', minute: '2-digit', second: '2-digit',
+                })}
+              </span>
+            </div>
+            <div style={{
+              color: C.text, fontSize: 13, lineHeight: 1.5,
+              paddingLeft: 4, wordBreak: 'break-word',
+            }}>
+              {msg.content}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 分页 */}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'center', alignItems: 'center' }}>
+          <button style={btn('ghost')} disabled={page === 0} onClick={() => setPage(p => p - 1)}>← 上一页</button>
+          <span style={{ color: C.textMuted, fontSize: 13 }}>{page + 1} / {totalPages}</span>
+          <button style={btn('ghost')} disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}>下一页 →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
-type NavId = 'overview' | 'keys' | 'zones' | 'skills' | 'docs' | 'heartbeat' | 'events';
+type NavId = 'overview' | 'hackathon' | 'keys' | 'zones' | 'skills' | 'docs' | 'heartbeat' | 'events' | 'broadcasts' | 'product';
 
 const NAV: { id: NavId; icon: string; label: string }[] = [
   { id: 'overview', icon: '📊', label: '概览' },
+  { id: 'hackathon', icon: '🎬', label: '幕次控制' },
+  { id: 'product', icon: '🦞', label: '产品文档' },
+  { id: 'broadcasts', icon: '📢', label: '广播历史' },
   { id: 'keys', icon: '🔑', label: 'API Keys' },
   { id: 'zones', icon: '🗺', label: 'Zones' },
   { id: 'skills', icon: '📄', label: 'Skills' },
@@ -957,6 +1272,9 @@ const NAV: { id: NavId; icon: string; label: string }[] = [
 
 const PAGE_TITLES: Record<NavId, string> = {
   overview: '平台概览',
+  hackathon: '🎬 黑客松幕次控制',
+  product: '🦞 产品文档（Agent 协作）',
+  broadcasts: '广播历史',
   keys: 'API Key 管理',
   zones: 'Zone 管理',
   skills: 'Skill 文档管理',
@@ -1036,6 +1354,9 @@ export function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         {/* Content area */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
           {active === 'overview' && <OverviewTab />}
+          {active === 'hackathon' && <HackathonTab />}
+          {active === 'product' && <ProductDocTab />}
+          {active === 'broadcasts' && <BroadcastHistoryTab />}
           {active === 'keys' && <KeysTab />}
           {active === 'zones' && <ZonesTab />}
           {active === 'skills' && <SkillsTab />}

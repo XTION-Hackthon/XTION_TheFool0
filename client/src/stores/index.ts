@@ -94,8 +94,21 @@ export function initStores(): void {
   // ── world.state ─────────────────────────────────────────────────────────────
   // Triggered after successful auth; initializes the full game world.
   wsClient.on('world.state', (payload) => {
-    const normalized = normalizeWorldState(payload as Record<string, unknown>);
+    const raw = payload as Record<string, unknown>;
+    const normalized = normalizeWorldState(raw);
     useGameStore.getState().initWorldState(normalized);
+
+    // Seed messageStore with recent broadcast history from world.state
+    // so Agent can read context immediately without an extra HTTP request
+    const recentBroadcasts = raw.recentBroadcasts as Array<{
+      id: string; senderId: string; senderName?: string; content: string; timestamp: number;
+    }> | undefined;
+    if (recentBroadcasts && recentBroadcasts.length > 0) {
+      const store = useMessageStore.getState();
+      for (const b of recentBroadcasts) {
+        store.addBroadcastMessage({ id: b.id, senderId: b.senderId, content: b.content, timestamp: b.timestamp });
+      }
+    }
   });
 
   // ── contestant.join ──────────────────────────────────────────────────────────

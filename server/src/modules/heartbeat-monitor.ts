@@ -19,8 +19,8 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_INTERVAL = 10; // seconds
-const DEFAULT_TIMEOUT = 30;  // seconds
+const DEFAULT_INTERVAL = 15; // seconds
+const DEFAULT_TIMEOUT = 60;  // seconds — 给 agent 足够的 LLM 推理时间
 const MAX_HISTORY = 100;
 
 const MIN_INTERVAL = 1;
@@ -83,11 +83,23 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
     if (!state) return;
 
     const now = Date.now();
+    const prevStatus = state.status;
 
     // Update in-memory state
     state.lastHeartbeat = now;
     state.status = 'healthy';
     state.timeoutEnteredAt = null;
+
+    // 如果之前是 timeout/offline，恢复为 online 并广播（心跳自愈）
+    if (prevStatus === 'timeout' || prevStatus === 'offline') {
+      db.prepare(`UPDATE contestants SET status = 'online', disconnected_at = NULL WHERE id = ?`)
+        .run(contestantId);
+      broadcast({
+        type: 'contestant.status',
+        payload: { id: contestantId, status: 'online' },
+        timestamp: now,
+      });
+    }
 
     // Append to history (cap at MAX_HISTORY)
     const record: HeartbeatRecord = {
@@ -187,7 +199,8 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
 
       // Evaluate transitions
       if (elapsed > 2 * timeoutMs) {
-        // timeout → offline
+        // timeout → offline：只标记状态，不强制断开 WebSocket
+        // agent 可能只是暂时忙碌（LLM 推理），保留连接让它自己恢复
         if (prevStatus !== 'offline') {
           state.status = 'offline';
           this.handleOffline(contestantId);
@@ -353,18 +366,14 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
   }
 
   private handleOffline(contestantId: string): void {
-    // Disconnect WebSocket
-    const ws = connections.get(contestantId);
-    if (ws) {
-      ws.close(1001, 'heartbeat_timeout');
-      connections.delete(contestantId);
-    }
+    // 不强制关闭 WebSocket — agent 可能只是心跳延迟，保留连接让它自己恢复
+    // 如果 WebSocket 本身已断开，ws.close 事件会独立处理清理逻辑
 
     // Update DB status
     db.prepare(`UPDATE contestants SET status = 'offline', disconnected_at = ? WHERE id = ?`)
       .run(Date.now(), contestantId);
 
-    // Push contestant.status event to all online contestants
+    // 广播离线状态给所有在线选手
     broadcast(
       {
         type: 'contestant.status',
@@ -372,6 +381,16 @@ class HeartbeatMonitor implements IHeartbeatMonitor {
         timestamp: Date.now(),
       },
     );
+
+    // 也通知 agent 自身（如果还连着）
+    const ws = connections.get(contestantId);
+    if (ws) {
+      sendEvent(ws, {
+        type: 'alert.heartbeat',
+        payload: { id: contestantId, status: 'offline' },
+        timestamp: Date.now(),
+      });
+    }
 
     // Log event via EventLogger (lazy import to avoid circular deps)
     this.logOfflineEvent(contestantId);

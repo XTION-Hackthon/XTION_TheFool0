@@ -36,6 +36,7 @@ const TALK_TTL_MS = 4000;
 const BROADCAST_TTL_MS = 5000;
 const MAX_TALK_BUBBLES = 5;
 const BARRAGE_SCROLL_DURATION_MS = 8000;
+const MAX_CHAT_PANEL_MESSAGES = 200;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,166 @@ function BroadcastBanner() {
   );
 }
 
+// ─── Broadcast Chat Panel ─────────────────────────────────────────────────────
+
+interface ChatEntry {
+  id: string;
+  type: 'broadcast' | 'talk';
+  senderName: string;
+  content: string;
+  timestamp: number;
+}
+
+function BroadcastChatPanel() {
+  const broadcastMessages = useMessageStore((s) => s.broadcastMessages);
+  const talkMessages = useMessageStore((s) => s.talkMessages);
+  const contestants = useGameStore((s) => s.contestants);
+  const [entries, setEntries] = useState<ChatEntry[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const seenIds = useRef(new Set<string>());
+
+  // 合并广播和 talk 消息
+  useEffect(() => {
+    const newEntries: ChatEntry[] = [];
+
+    for (const msg of broadcastMessages) {
+      if (!seenIds.current.has(`b-${msg.id}`)) {
+        seenIds.current.add(`b-${msg.id}`);
+        const sender = contestants.get(msg.senderId);
+        newEntries.push({
+          id: `b-${msg.id}`,
+          type: 'broadcast',
+          senderName: sender?.name ?? msg.senderId.slice(0, 8),
+          content: msg.content,
+          timestamp: msg.timestamp,
+        });
+      }
+    }
+
+    for (const msg of talkMessages) {
+      if (!seenIds.current.has(`t-${msg.id}`)) {
+        seenIds.current.add(`t-${msg.id}`);
+        const sender = contestants.get(msg.senderId);
+        newEntries.push({
+          id: `t-${msg.id}`,
+          type: 'talk',
+          senderName: sender?.name ?? msg.senderId.slice(0, 8),
+          content: msg.content,
+          timestamp: msg.timestamp,
+        });
+      }
+    }
+
+    if (newEntries.length === 0) return;
+
+    setEntries((prev) => {
+      const combined = [...prev, ...newEntries].sort((a, b) => a.timestamp - b.timestamp);
+      return combined.slice(-MAX_CHAT_PANEL_MESSAGES);
+    });
+  }, [broadcastMessages, talkMessages, contestants]);
+
+  // 新消息自动滚到底部
+  useEffect(() => {
+    if (!collapsed) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [entries, collapsed]);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 12,
+        bottom: 12,
+        width: 280,
+        maxHeight: collapsed ? 40 : 340,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'rgba(8, 12, 28, 0.82)',
+        border: '1px solid rgba(74, 158, 255, 0.25)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        backdropFilter: 'blur(8px)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        transition: 'max-height 0.25s ease',
+        pointerEvents: 'auto',
+        zIndex: 15,
+      }}
+    >
+      {/* 标题栏 */}
+      <div
+        onClick={() => setCollapsed((v) => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '8px 12px',
+          borderBottom: collapsed ? 'none' : '1px solid rgba(74,158,255,0.15)',
+          cursor: 'pointer',
+          userSelect: 'none',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ color: '#7ec8ff', fontSize: 12, fontWeight: 600, letterSpacing: 1 }}>
+          📡 消息频道
+        </span>
+        <span style={{ color: '#4a9eff', fontSize: 11 }}>{collapsed ? '▲' : '▼'}</span>
+      </div>
+
+      {/* 消息列表 */}
+      {!collapsed && (
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '6px 8px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          {entries.length === 0 && (
+            <div style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11, textAlign: 'center', padding: '12px 0' }}>
+              暂无消息
+            </div>
+          )}
+          {entries.map((entry) => (
+            <div key={entry.id} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {/* 类型标签 */}
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4,
+                  background: entry.type === 'broadcast' ? 'rgba(180,120,255,0.2)' : 'rgba(74,158,255,0.2)',
+                  color: entry.type === 'broadcast' ? '#d4a0ff' : '#7ec8ff',
+                  border: `1px solid ${entry.type === 'broadcast' ? 'rgba(180,120,255,0.4)' : 'rgba(74,158,255,0.3)'}`,
+                  flexShrink: 0,
+                }}>
+                  {entry.type === 'broadcast' ? '广播' : '对话'}
+                </span>
+                {/* 发送者 */}
+                <span style={{ color: entry.type === 'broadcast' ? '#d4a0ff' : '#7ec8ff', fontSize: 11, fontWeight: 600, flexShrink: 0 }}>
+                  {entry.senderName}
+                </span>
+                {/* 时间 */}
+                <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10, marginLeft: 'auto', flexShrink: 0 }}>
+                  {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              </div>
+              {/* 内容 */}
+              <div style={{
+                color: 'rgba(240,240,255,0.9)', fontSize: 12,
+                paddingLeft: 4, wordBreak: 'break-word', lineHeight: 1.4,
+              }}>
+                {entry.content}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Barrage ──────────────────────────────────────────────────────────────────
 
 function BarrageLayer() {
@@ -288,20 +449,16 @@ export function UIOverlay() {
     injectStyles();
   }, []);
 
-  // Agent_Viewer: read-only view — show broadcast and barrage display but no talk bubbles
-  // Human_Viewer: show barrage layer (incoming barrages scroll) + broadcast
-  // Admin / Agent_Player: full display (talk bubbles, broadcast, barrage layer)
-  // null (loading/unauthenticated): show nothing role-specific
-
+  // Always render broadcast/barrage layers — they depend on WS messages, not role.
+  // Talk bubbles only for Agent_Player and Admin (they participate in zone talk).
   const showTalkBubbles = role === 'Admin' || role === 'Agent_Player';
-  const showBroadcast = role !== null; // all authenticated roles see broadcasts
-  const showBarrageLayer = role !== null; // all authenticated roles see incoming barrages
 
   return (
     <div style={overlayStyle}>
-      {showBroadcast && <BroadcastBanner />}
+      <BroadcastBanner />
       {showTalkBubbles && <TalkBubbles />}
-      {showBarrageLayer && <BarrageLayer />}
+      <BarrageLayer />
+      <BroadcastChatPanel />
     </div>
   );
 }
